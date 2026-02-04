@@ -1,6 +1,31 @@
 const { chromium } = require('playwright');
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 
+function normalizeData(rawDate, rawTitle) {
+  //Clean title
+  const title = rawTitle.trim().replace(/\s+/g, ' ');
+
+  //Clean date and time
+  let cleanedText = rawDate.replace(/\([A-Za-z]+\)|[A-Za-z]+, /g, '').trim();
+  cleanedText = cleanedText.replace(/\s+/g, ' ');
+
+  //Split date and time
+  let datePart = cleanedText;
+  let timePart = "TBA";
+
+  if (cleanedText.toLowerCase().includes('pm') || cleanedText.toLowerCase().includes('am')) {
+    // Match time pattern like "7:30 PM" or "7 PM" or "7 p.m."
+    const timeMatch = cleanedText.match(/(\d+(?::\d+)?\s*(?:pm|am|p\.m\.|a\.m\.))/i);
+    if (timeMatch) {
+      timePart = timeMatch[1].trim();
+      datePart = cleanedText.substring(0, timeMatch.index).trim();
+    }
+  }
+
+  return { title, date: datePart, time: timePart };
+}
+
+
 (async () => {
   const browser = await chromium.launch({ headless: false });
   const page = await browser.newPage();
@@ -36,18 +61,20 @@ const createCsvWriter = require('csv-writer').createObjectCsvWriter;
       for (const item of eventItems) {
         try {
           // Use '.innerText()' to get clean text without hidden SVG code
-          const title = await item.locator('h3.title a').innerText();
+          const rawTitle = await item.locator('h3.title a').innerText();
           const dateAndTime = await item.locator('.date').innerText();
 
           // Clean up the text by removing extra line breaks and spaces
-          const cleanTitle = title.trim().replace(/\s+/g, ' ');
+          const cleanTitle = rawTitle.trim().replace(/\s+/g, ' ');
           const cleanDate = dateAndTime.trim().replace(/\s+/g, ' ');
 
           console.log(`Successfully grabbed: ${cleanTitle}`); // Watch the terminal for this!
 
+          const { title, date, time } = normalizeData(dateAndTime, cleanTitle);
           allScrapedData.push({
-            title: cleanTitle,
-            date: cleanDate,
+            title,
+            date,
+            time,
             source: 'Capital One Arena'
           });
         } catch (err) {
@@ -60,12 +87,10 @@ const createCsvWriter = require('csv-writer').createObjectCsvWriter;
     else if (url.includes('enterprisecenter')) {
       console.log(`\nScraping Enterprise Center...`);
 
-      // Wait for the main events list to be present
+      // Wait for the main events list to be loaded
       await page.waitForSelector('#eventsList .event-entry', { timeout: 15000 });
 
-      // Safely click "Load More" until either:
-      // - the button disappears, OR
-      // - clicking it no longer increases the number of event entries.
+      // Click load more until no more events
       try {
         while (true) {
           const loadMoreVisible = await page.isVisible('#loadMoreEvents');
@@ -80,7 +105,7 @@ const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 
           const afterCount = await page.locator('#eventsList .event-entry').count();
           if (afterCount <= beforeCount) {
-            // No new events were added; avoid infinite loop.
+            // count and break if no new events loaded
             console.log('No new events after clicking "Load More"; stopping.');
             break;
           }
@@ -113,22 +138,86 @@ const createCsvWriter = require('csv-writer').createObjectCsvWriter;
           const showtimes = await page.locator('.showings_list li.entry').all();
 
           for (const show of showtimes) {
+            const rawDateAndTime = `${(await show.locator('.date').innerText()).trim()} ${(await show.locator('.time').innerText()).trim()}`;
+            const { title, date, time } = normalizeData(rawDateAndTime, eventTitle.trim());
             allScrapedData.push({
-              title: eventTitle.trim(),
-              date: `${(await show.locator('.date').innerText()).trim()} ${(await show.locator('.time').innerText()).trim()}`,
+              title,
+              date,
+              time,
               source: 'Enterprise Center'
             });
-        }
-        console.log(`Successfully deep-scraped: ${eventTitle.trim()}`);
+          }
+          console.log(`Successfully deep-scraped: ${eventTitle.trim()}`);
 
-      } catch (err) {
-        console.log(`Error visiting detail page ${detailUrl}`);
+        } catch (err) {
+          console.log(`Error visiting detail page ${detailUrl}`);
+        }
       }
-    }
   } else if (url.includes('goheels')) {
-      // Run the Goheels logic
       console.log(`\nScraping Go Heels...`);
-      
+      //can't seem to close the cookie consent popup lol
+
+      //scroll to the bottom to make sure all game cards are loaded
+      try {
+        await page.evaluate(async () => {
+          await new Promise((resolve) => {
+            let totalHeight = 0;
+            let distance = 100;
+            let timer = setInterval(() => {
+              let scrollHeight = document.body.scrollHeight;
+              window.scrollBy(0, distance);
+              totalHeight += distance;
+              if(totalHeight >= scrollHeight) {
+                clearInterval(timer);
+                resolve();
+              }
+            }, 100);
+          });
+        });
+      } catch (e) {
+        console.log('Scrolling failed (page may have navigated or closed), moving on to game card scraping if possible...');
+      }
+
+      //find all game card containers
+      //every game is wrapped in a card
+      const gameCards = await page.locator('.s-game-card__header-inner-top-inner').all();
+      console.log(`Found ${gameCards.length} games!`);
+
+      for (const card of gameCards) {
+        try {
+          const opponent = await card.locator('[data-test-id="s-game-card-standard__header-team-opponent-link"]').innerText();
+
+          // try to find the date in the upcoming games section
+          let dateText = '';
+          const upcomingDate = card.locator('[data-test-id="s-game-card-standard__header-game-date"]');
+          const pastDate = card.locator('[data-test-id="s-game-card-standard__header-game-date-details"]');
+
+          if (await upcomingDate.count() > 0) {
+            dateText = await upcomingDate.innerText();
+          } else if (await pastDate.count() > 0) {
+            dateText = await pastDate.innerText();
+          }
+
+          // get time and date
+          const timeText = await card.locator('[data-test-id="s-game-card-standard__header-game-time"]').innerText();
+
+          //Clean up
+          const cleanTitle = `UNC Tar Heels vs ${opponent.trim()}`;
+          const cleanDate = `${dateText.trim()} ${timeText.trim()}`.replace(/\s+/g, ' ');
+
+          console.log(`Successfully grabbed: ${cleanTitle}`);
+
+          const rawDateAndTime = `${dateText.trim()} ${timeText.trim()}`;
+          const { title, date, time } = normalizeData(rawDateAndTime, `UNC Tar Heels vs ${opponent}`);
+          allScrapedData.push({
+            title,
+            date,
+            source: 'Go Heels'
+          });
+        } catch (err) {
+          continue;
+        }
+      } 
     }
   }
 
@@ -137,7 +226,8 @@ const createCsvWriter = require('csv-writer').createObjectCsvWriter;
     path: 'events.csv',
     header: [
       {id: 'title', title: 'EVENT NAME'},
-      {id: 'date', title: 'DATE AND TIME'},
+      {id: 'date', title: 'DATE'},
+      {id: 'time', title: 'TIME'},
       {id: 'source', title: 'SOURCE'}
     ]
   });
