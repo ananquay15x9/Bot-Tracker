@@ -16,6 +16,9 @@ Clone the repository and install the required modules:
 # Install the library dependencies
 npm install
 
+# Install Playwright
+npm install playwright
+
 # Install the browser binaries (Chromium)
 npx playwright install chromium
 
