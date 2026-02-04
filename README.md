@@ -29,3 +29,6 @@ npm install csv-writer
 node scraper.js
 
 ```
+
+### 3. Exported CSV File
+You will see the file named 'events.csv' after running the script.
