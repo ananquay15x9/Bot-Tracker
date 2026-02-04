@@ -18,13 +18,57 @@ function normalizeData(rawDate, rawTitle) {
     const timeMatch = cleanedText.match(/(\d+(?::\d+)?\s*(?:pm|am|p\.m\.|a\.m\.))/i);
     if (timeMatch) {
       timePart = timeMatch[1].trim();
+      // Convert "p.m." to "PM" and "a.m." to "AM"
+      timePart = timePart.replace(/p\.m\./i, 'PM').replace(/a\.m\./i, 'AM');
+      timePart = timePart.replace(/\s*pm/i, ' PM').replace(/\s*am/i, ' AM');
+      timePart = timePart.trim();
+
       datePart = cleanedText.substring(0, timeMatch.index).trim();
+      // Add comma after date part for consistency
+      if (datePart && !datePart.endsWith(',')) {
+        datePart = datePart + ',';
+      }
     }
   }
 
   return { title, date: datePart, time: timePart };
 }
 
+//try DOM removal of cookie popup
+async function setupTranscendKiller(page) {
+  //remove on creation
+  await page.addInitScript(() => {
+    const kill = () => {
+      const host = document.querySelector('#transcend-consent-manager');
+      if (host) host.remove();
+
+      //unlock scroll
+      document.documentElement.style.overflow = 'auto';
+      document.body.style.overflow = 'auto';
+      document.body.style.position = 'static';
+    };
+
+    kill();
+
+    const obs = new MutationObserver(() => kill());
+    obs.observe(document.documentElement, { childList: true, subtree: true });
+  });
+
+  //block it
+  await page.route('**/*', (route) => {
+    const u = route.request().url();
+    if (
+      u.includes('transcend-cdn.com/cm/') ||
+      u.includes('transcend.io') ||
+      u.includes('/consent') && u.includes('transcend')
+    ) {
+      return route.abort();
+    }
+    return route.continue();
+  });
+}
+
+// DONE TO MAIN FUNCTION
 
 (async () => {
   const browser = await chromium.launch({ headless: false });
@@ -38,13 +82,21 @@ function normalizeData(rawDate, rawTitle) {
 
   const allScrapedData = [];
 
+  //setup killer
+  let transcendSetupDone = false;
+
   for (const url of sites) {
-    await page.goto(url);
-    
+    if (url.includes('goheels') && !transcendSetupDone) {
+      await setupTranscendKiller(page);
+      transcendSetupDone = true;
+    }
+
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
+
     if (url.includes('capitalonearena')) {
       // Run the Capital One logic
       console.log(`\nScraping Capital One Arena...`);
-      
+
       //Close popups
       try { await page.getByRole('button', { name: 'Accept All' }).click({timeout: 5000}); } catch(e) {}
 
@@ -82,7 +134,7 @@ function normalizeData(rawDate, rawTitle) {
           console.log("Skipping an event with missing info...");
         }
       }
-    } 
+    }
     // ENTERPRISE CENTER WEBSITE!!!!!?
     else if (url.includes('enterprisecenter')) {
       console.log(`\nScraping Enterprise Center...`);
@@ -128,13 +180,13 @@ function normalizeData(rawDate, rawTitle) {
 
       //Filter unique URLs
       const uniqueUrls = [...new Set(urlsToVisit)];
-      
+
       // Click to each detail info page and scrape data
       for (const detailUrl of uniqueUrls) {
         try {
           await page.goto(detailUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-          const eventTitle = await page.locator('h1').innerText(); 
+          const eventTitle = await page.locator('h1').innerText();
           const showtimes = await page.locator('.showings_list li.entry').all();
 
           for (const show of showtimes) {
@@ -156,6 +208,14 @@ function normalizeData(rawDate, rawTitle) {
   } else if (url.includes('goheels')) {
       console.log(`\nScraping Go Heels...`);
       //can't seem to close the cookie consent popup lol
+      await page.evaluate(()=> {
+        const host = document.querySelector('#transcend-consent-manager');
+        if (host) host.remove();
+
+        document.documentElement.style.overflow = 'auto';
+        document.body.style.overflow = 'auto';
+        document.body.style.position = 'static';
+      });
 
       //scroll to the bottom to make sure all game cards are loaded
       try {
@@ -207,17 +267,38 @@ function normalizeData(rawDate, rawTitle) {
 
           console.log(`Successfully grabbed: ${cleanTitle}`);
 
+          // Special handling for Go Heels combined date+time format
           const rawDateAndTime = `${dateText.trim()} ${timeText.trim()}`;
-          const { title, date, time } = normalizeData(rawDateAndTime, `UNC Tar Heels vs ${opponent}`);
+          let finalDate = rawDateAndTime;
+          let finalTime = 'TBA';
+
+          // Check if there's a time in the format (e.g., "6:30 p.m." or "7 p.m.")
+          const timeMatch = rawDateAndTime.match(/(\d+(?::\d+)?\s*(?:p\.m\.|a\.m\.))/i);
+          if (timeMatch) {
+            // Extract time and convert to uppercase PM/AM
+            finalTime = timeMatch[1].trim()
+              .replace(/p\.m\./i, 'PM')
+              .replace(/a\.m\./i, 'AM')
+              .replace(/\s+/g, ' ')
+              .trim();
+
+            // Extract date part and add comma
+            finalDate = rawDateAndTime.substring(0, timeMatch.index).trim();
+            if (finalDate && !finalDate.endsWith(',')) {
+              finalDate = finalDate + ',';
+            }
+          }
+
           allScrapedData.push({
-            title,
-            date,
+            title: cleanTitle,
+            date: finalDate,
+            time: finalTime,
             source: 'Go Heels'
           });
         } catch (err) {
           continue;
         }
-      } 
+      }
     }
   }
 
