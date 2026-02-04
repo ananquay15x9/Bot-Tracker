@@ -1,6 +1,173 @@
 const { chromium } = require('playwright');
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 
+// Convert date to yyyy-mm-dd format
+function formatDate(dateStr) {
+  // Handle "TBA" or date ranges
+  if (!dateStr || dateStr === 'TBA' || dateStr.includes('-')) {
+    return dateStr;
+  }
+
+  // Remove trailing comma and extra spaces
+  dateStr = dateStr.replace(/,\s*$/, '').trim();
+
+  // Parse different date formats
+  // Format 1: "FEB. 4, 2026 /" -> 2026-02-04
+  // Format 2: "Feb 5, 2026" -> 2026-02-05
+  // Format 3: "Feb 7" -> 2026-02-07 (assume current year 2026)
+
+  const monthMap = {
+    'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04',
+    'may': '05', 'jun': '06', 'jul': '07', 'aug': '08',
+    'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12'
+  };
+
+  // Remove slashes and extra punctuation
+  dateStr = dateStr.replace(/\//g, '').trim();
+
+  // Match pattern: Month Day Year or Month Day
+  const match = dateStr.match(/([A-Za-z]+)\.?\s+(\d+)(?:\s+(\d{4}))?/);
+  if (match) {
+    const month = monthMap[match[1].toLowerCase().substring(0, 3)];
+    const day = match[2].padStart(2, '0');
+    const year = match[3] || '2026';
+
+    if (month) {
+      return `${year}-${month}-${day}`;
+    }
+  }
+
+  return dateStr;
+}
+
+// Format time to 12:00AM or 12:00PM (no space)
+function formatTime(timeStr) {
+  if (!timeStr || timeStr === 'TBA') {
+    return timeStr;
+  }
+
+  // Remove spaces between time and AM/PM
+  timeStr = timeStr.replace(/\s*(AM|PM|am|pm)/i, (match, ampm) => ampm.toUpperCase());
+
+  // Ensure minutes are included (add :00 if missing)
+  if (/^\d+(?:AM|PM)$/i.test(timeStr)) {
+    timeStr = timeStr.replace(/(\d+)(AM|PM)/i, '$1:00$2');
+  }
+
+  return timeStr;
+}
+
+// Expand date ranges into individual dates
+function expandDateRange(dateStr, isGoHeels = false) {
+  const monthMap = {
+    'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4,
+    'may': 5, 'jun': 6, 'jul': 7, 'aug': 8,
+    'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
+  };
+
+  // Pattern 1: "FEB. 13 - 14, 2026" or "OCT. 25 - 27, 2026"
+  const pattern1 = dateStr.match(/([A-Z]+)\.?\s+(\d+)\s*-\s*(\d+),?\s*(\d{4})/i);
+  if (pattern1) {
+    const monthStr = pattern1[1].toLowerCase().substring(0, 3);
+    const monthNum = monthMap[monthStr];
+    const startDay = parseInt(pattern1[2]);
+    const endDay = parseInt(pattern1[3]);
+    const year = pattern1[4];
+
+    const dates = [];
+    for (let day = startDay; day <= endDay; day++) {
+      dates.push(`${year}-${String(monthNum).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
+    }
+    return dates;
+  }
+
+  // Pattern 2: "Mar 10 - Mar 14 TBA" (Go Heels format)
+  const pattern2 = dateStr.match(/([A-Z]+)\.?\s+(\d+)\s*-\s*([A-Z]+)\.?\s+(\d+)/i);
+  if (pattern2) {
+    const startMonthStr = pattern2[1].toLowerCase().substring(0, 3);
+    const startDay = parseInt(pattern2[2]);
+    const endMonthStr = pattern2[3].toLowerCase().substring(0, 3);
+    const endDay = parseInt(pattern2[4]);
+
+    const startMonth = monthMap[startMonthStr];
+    const endMonth = monthMap[endMonthStr];
+
+    // Determine year based on month (for Go Heels academic year logic)
+    let startYear = isGoHeels && (startMonthStr === 'oct' || startMonthStr === 'nov' || startMonthStr === 'dec') ? 2025 : 2026;
+    let endYear = isGoHeels && (endMonthStr === 'oct' || endMonthStr === 'nov' || endMonthStr === 'dec') ? 2025 : 2026;
+
+    const dates = [];
+
+    if (startMonth === endMonth) {
+      // Same month
+      for (let day = startDay; day <= endDay; day++) {
+        dates.push(`${startYear}-${String(startMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
+      }
+    } else {
+      // Different months - add all days from start month
+      const daysInStartMonth = new Date(startYear, startMonth, 0).getDate();
+      for (let day = startDay; day <= daysInStartMonth; day++) {
+        dates.push(`${startYear}-${String(startMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
+      }
+      // Add all days until end day in end month
+      for (let day = 1; day <= endDay; day++) {
+        dates.push(`${endYear}-${String(endMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
+      }
+    }
+    return dates;
+  }
+
+  // No range detected, return single date
+  return [dateStr];
+}
+
+// Special date formatter for Go Heels (handles 2025-2026 academic year)
+function formatGoHeelsDate(dateStr) {
+  if (!dateStr || dateStr === 'TBA') {
+    return dateStr;
+  }
+
+  // Clean up the messy formatting: remove newlines, day-of-week in parentheses, extra spaces
+  dateStr = dateStr.replace(/\n/g, ' ').replace(/\([A-Za-z]+\)/g, '').replace(/\s+/g, ' ').trim();
+
+  // Remove duplicate date patterns like "Oct 4 Oct 4"
+  dateStr = dateStr.replace(/(\b[A-Za-z]{3}\s+\d+)\s+\1/g, '$1');
+
+  // Remove trailing comma
+  dateStr = dateStr.replace(/,\s*$/, '').trim();
+
+  const monthMap = {
+    'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04',
+    'may': '05', 'jun': '06', 'jul': '07', 'aug': '08',
+    'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12'
+  };
+
+  // Check if it's a date range (contains " - " or "TBA" after a dash)
+  if (dateStr.includes(' - ') || /\d+\s*-/.test(dateStr)) {
+    return dateStr; // Keep date ranges as-is
+  }
+
+  // Match pattern: Month Day
+  const match = dateStr.match(/([A-Za-z]+)\.?\s+(\d+)/);
+  if (match) {
+    const monthStr = match[1].toLowerCase().substring(0, 3);
+    const month = monthMap[monthStr];
+    const day = match[2].padStart(2, '0');
+
+    // Determine year: Oct, Nov, Dec are in 2025; Jan-Sep are in 2026
+    let year = '2026';
+    if (monthStr === 'oct' || monthStr === 'nov' || monthStr === 'dec') {
+      year = '2025';
+    }
+
+    if (month) {
+      return `${year}-${month}-${day}`;
+    }
+  }
+
+  return dateStr;
+}
+
 function normalizeData(rawDate, rawTitle) {
   //Clean title
   const title = rawTitle.trim().replace(/\s+/g, ' ');
@@ -123,12 +290,18 @@ async function setupTranscendKiller(page) {
           console.log(`Successfully grabbed: ${cleanTitle}`); // Watch the terminal for this!
 
           const { title, date, time } = normalizeData(dateAndTime, cleanTitle);
-          allScrapedData.push({
-            title,
-            date,
-            time,
-            source: 'Capital One Arena'
-          });
+          const formattedDate = formatDate(date);
+          const dates = expandDateRange(formattedDate);
+
+          // Add a row for each date in the range
+          for (const singleDate of dates) {
+            allScrapedData.push({
+              venue: 'Capital One Arena',
+              title,
+              date: singleDate,
+              time: formatTime(time)
+            });
+          }
         } catch (err) {
           // If one specific event has a weird structure, we don't want the whole bot to crash
           console.log("Skipping an event with missing info...");
@@ -192,12 +365,18 @@ async function setupTranscendKiller(page) {
           for (const show of showtimes) {
             const rawDateAndTime = `${(await show.locator('.date').innerText()).trim()} ${(await show.locator('.time').innerText()).trim()}`;
             const { title, date, time } = normalizeData(rawDateAndTime, eventTitle.trim());
-            allScrapedData.push({
-              title,
-              date,
-              time,
-              source: 'Enterprise Center'
-            });
+            const formattedDate = formatDate(date);
+            const dates = expandDateRange(formattedDate);
+            
+            // Add a row for each date in the range
+            for (const singleDate of dates) {
+              allScrapedData.push({
+                venue: 'Enterprise Center',
+                title,
+                date: singleDate,
+                time: formatTime(time)
+              });
+            }
           }
           console.log(`Successfully grabbed: ${eventTitle.trim()}`);
 
@@ -289,12 +468,18 @@ async function setupTranscendKiller(page) {
             }
           }
 
-          allScrapedData.push({
-            title: cleanTitle,
-            date: finalDate,
-            time: finalTime,
-            source: 'Go Heels'
-          });
+          const formattedDate = formatGoHeelsDate(finalDate);
+          const dates = expandDateRange(formattedDate, true);
+          
+          // Add a row for each date in the range
+          for (const singleDate of dates) {
+            allScrapedData.push({
+              venue: 'Go Heels',
+              title: cleanTitle,
+              date: singleDate,
+              time: formatTime(finalTime)
+            });
+          }
         } catch (err) {
           continue;
         }
@@ -306,10 +491,10 @@ async function setupTranscendKiller(page) {
   const csvWriter = createCsvWriter({
     path: 'events.csv',
     header: [
+      {id: 'venue', title: 'VENUE'},
       {id: 'title', title: 'EVENT NAME'},
       {id: 'date', title: 'DATE'},
-      {id: 'time', title: 'TIME'},
-      {id: 'source', title: 'SOURCE'}
+      {id: 'time', title: 'TIME'}
     ]
   });
 
