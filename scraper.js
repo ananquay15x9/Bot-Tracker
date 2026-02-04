@@ -40,6 +40,34 @@ function formatDate(dateStr) {
   return dateStr;
 }
 
+// Get academic year based on current date
+// Academic year runs from August to July (e.g., 2025-2026 academic year)
+function getAcademicYear() {
+  const now = new Date();
+  const currentMonth = now.getMonth() + 1; // 1-12
+  const currentYear = now.getFullYear();
+  
+  // If current month is Aug-Dec, academic year is currentYear to currentYear+1
+  // If current month is Jan-Jul, academic year is currentYear-1 to currentYear
+  if (currentMonth >= 8) {
+    return { firstHalf: currentYear, secondHalf: currentYear + 1 };
+  } else {
+    return { firstHalf: currentYear - 1, secondHalf: currentYear };
+  }
+}
+
+// Determine which year a month falls into based on academic calendar
+function getYearForMonth(monthStr) {
+  const academicYear = getAcademicYear();
+  // Oct, Nov, Dec are in the first half of academic year
+  // Jan-Sep are in the second half
+  if (monthStr === 'oct' || monthStr === 'nov' || monthStr === 'dec') {
+    return academicYear.firstHalf;
+  } else {
+    return academicYear.secondHalf;
+  }
+}
+
 // Format time to 12:00AM or 12:00PM (no space)
 function formatTime(timeStr) {
   if (!timeStr || timeStr === 'TBA') {
@@ -93,8 +121,8 @@ function expandDateRange(dateStr, isGoHeels = false) {
     const endMonth = monthMap[endMonthStr];
 
     // Determine year based on month (for Go Heels academic year logic)
-    let startYear = isGoHeels && (startMonthStr === 'oct' || startMonthStr === 'nov' || startMonthStr === 'dec') ? 2025 : 2026;
-    let endYear = isGoHeels && (endMonthStr === 'oct' || endMonthStr === 'nov' || endMonthStr === 'dec') ? 2025 : 2026;
+    let startYear = isGoHeels ? getYearForMonth(startMonthStr) : new Date().getFullYear();
+    let endYear = isGoHeels ? getYearForMonth(endMonthStr) : new Date().getFullYear();
 
     const dates = [];
 
@@ -154,11 +182,8 @@ function formatGoHeelsDate(dateStr) {
     const month = monthMap[monthStr];
     const day = match[2].padStart(2, '0');
 
-    // Determine year: Oct, Nov, Dec are in 2025; Jan-Sep are in 2026
-    let year = '2026';
-    if (monthStr === 'oct' || monthStr === 'nov' || monthStr === 'dec') {
-      year = '2025';
-    }
+    // Determine year dynamically based on academic calendar
+    const year = getYearForMonth(monthStr);
 
     if (month) {
       return `${year}-${month}-${day}`;
@@ -367,7 +392,7 @@ async function setupTranscendKiller(page) {
             const { title, date, time } = normalizeData(rawDateAndTime, eventTitle.trim());
             const formattedDate = formatDate(date);
             const dates = expandDateRange(formattedDate);
-            
+
             // Add a row for each date in the range
             for (const singleDate of dates) {
               allScrapedData.push({
@@ -446,7 +471,7 @@ async function setupTranscendKiller(page) {
 
           console.log(`Successfully grabbed: ${cleanTitle}`);
 
-          // Special handling for Go Heels combined date+time format
+          // Parse date and time
           const rawDateAndTime = `${dateText.trim()} ${timeText.trim()}`;
           let finalDate = rawDateAndTime;
           let finalTime = 'TBA';
@@ -461,7 +486,7 @@ async function setupTranscendKiller(page) {
               .replace(/\s+/g, ' ')
               .trim();
 
-            // Extract date part and add comma
+            
             finalDate = rawDateAndTime.substring(0, timeMatch.index).trim();
             if (finalDate && !finalDate.endsWith(',')) {
               finalDate = finalDate + ',';
@@ -470,7 +495,7 @@ async function setupTranscendKiller(page) {
 
           const formattedDate = formatGoHeelsDate(finalDate);
           const dates = expandDateRange(formattedDate, true);
-          
+
           // Add a row for each date in the range
           for (const singleDate of dates) {
             allScrapedData.push({
