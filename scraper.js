@@ -147,7 +147,7 @@ function normalizeData(rawDate, rawTitle) {
               source: 'Enterprise Center'
             });
           }
-          console.log(`Successfully deep-scraped: ${eventTitle.trim()}`);
+          console.log(`Successfully grabbed: ${eventTitle.trim()}`);
 
         } catch (err) {
           console.log(`Error visiting detail page ${detailUrl}`);
