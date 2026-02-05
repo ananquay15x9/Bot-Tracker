@@ -1,6 +1,6 @@
-# Bot-Tracker
+# Event Tracker 
 
-This tool automatically scrapes event schedules from sports arena websites.
+A bot crawler built with Node.js and Playwright. This bot will scrape multiple major arena websites to generate a CSV calendar.
 
 ## Getting Started
 
@@ -11,6 +11,10 @@ Ensure you have [Node.js](https://nodejs.org/) installed.
 
 ### 2. Installation
 Clone the repository and install the required modules:
+```bash
+git clone https://github.com/ananquay15x9/Bot-Tracker.git
+cd bot-tracker
+```
 
 ```bash
 # Install the library dependencies
@@ -26,9 +30,9 @@ npx playwright install chromium
 npm install csv-writer
 
 # To run the scraper and generate the events.csv file
-node scraper.js
+node crawler.js
 
 ```
 
 ### 3. Exported CSV File
-You will see the file named 'events.csv' after running the script.
+You will see the file named 'calendar.csv' after running the script.

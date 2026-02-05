@@ -412,8 +412,38 @@ function categorizeKFC(title, description) {
     const otherKeywords = ['disney', 'mickey', 'family', 'kids', 'children', 'expo', 'festival'];
     if (otherKeywords.some(kw => fullText.includes(kw)) || !musicKeywords.some(kw => fullText.includes(kw))) {
         return 'Other';
+    }   
+}
+
+// --- AMERANT TYPE
+function categorizeAmerant(title, description) {
+    const titleLower = title.toLowerCase();
+    const descLower = (description || "").toLowerCase();
+    const fullText = (titleLower + " " + descLower);
+
+    // Mickey - always Other, check first
+    if (fullText.includes('mickey') || fullText.includes('disney') || fullText.includes('wwe')) {
+        return 'Other';
     }
-    
+
+    // NHL 
+    if (titleLower.includes('panthers') || titleLower.includes('nhl') || titleLower.includes('hockey') || titleLower.includes('vs') || titleLower.includes('fla') || 
+        titleLower.includes('tor') || titleLower.includes('det') || titleLower.includes('cbj') || titleLower.includes('bos') || titleLower.includes('ott') || 
+        titleLower.includes('nyr')) {
+        return 'NHL';
+    }
+
+    // Concert
+    const musicKeywords = ['concert', 'band', 'orchestra', 'symphony', 'choir', 'live', 'performance', 'tour', 'festival', 'show', 'tribute'];
+    if (musicKeywords.some(kw => fullText.includes(kw))) {
+        return 'Concert';
+    }
+
+    // Other (WWE, Disney)
+    const otherKeywords = ['disney', 'family', 'kids', 'children', 'expo', 'festival'];
+    if (otherKeywords.some(kw => fullText.includes(kw)) || !musicKeywords.some(kw => fullText.includes(kw))) {
+        return 'Other';
+    }
 }
 
 // =======================================
@@ -431,7 +461,8 @@ function categorizeKFC(title, description) {
     'https://www.enterprisecenter.com/events',
     'https://goheels.com/sports/mens-basketball/schedule',
     'https://www.grandcasinoarena.com/events',
-    'https://www.kfcyumcenter.com/events'
+    'https://www.kfcyumcenter.com/events',
+    'https://www.amerantbankarena.com/events'
   ];
 
   const allScrapedData = [];
@@ -892,6 +923,97 @@ function categorizeKFC(title, description) {
         } catch (err) {
           console.log(`Error scraping ${detailUrl}: ${err.message}`);
         } 
+      }
+    } else if (url.includes('amerantbankarena')) {
+      console.log(`\nScraping Amerant Bank Arena...`);
+
+      // LOAD ALL EVENTS
+    console.log('Loading all events');
+    try {
+        const loadMoreBtn = page.locator('#loadMoreEvents');
+        while (await loadMoreBtn.isVisible() && !(await loadMoreBtn.getAttribute('disabled'))) {
+            await loadMoreBtn.scrollIntoViewIfNeeded();
+            await loadMoreBtn.click();
+            await page.waitForTimeout(1500);
+        }
+    } catch (e) {
+        console.log('Finished loading events list.');
+    }
+
+    // COLLECT LINKS
+    const eventLinks = await page.locator('h3.title a').all();
+    const urlsToVisit = [];
+    for (const link of eventLinks) {
+        const href = await link.getAttribute('href');
+        if (href) urlsToVisit.push(href.startsWith('http') ? href : `https://www.amerantbankarena.com${href}`);
+    }
+
+    const uniqueUrls = [...new Set(urlsToVisit)].filter(url => url.includes('/events/detail/'));
+    console.log(`Found ${uniqueUrls.length} unique events to deep scrape.`);
+
+    // SCRAPING
+    for (const detailUrl of uniqueUrls) {
+      try {
+        await page.goto(detailUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        const eventTitle = await page.locator('h1.title').first().innerText();
+
+        //Expand description if button exists
+        try {
+            const moreInfoBtn = page.locator('button.read-more');
+            if (await moreInfoBtn.isVisible()) {
+                await moreInfoBtn.click();
+                await page.waitForTimeout(300);
+            }
+        } catch (e) {}
+
+        const eventDescription = await page.locator('.description_inner').textContent();
+        const eventType = categorizeAmerant(eventTitle, eventDescription);
+
+        // loop through multiple showtimes
+        const showtimeItems = await page.locator('ul.list li.listItem').all();
+
+        for (const show of showtimeItems) {
+            const month = await show.locator('.m-date__month').innerText();
+            const day = await show.locator('.m-date__day').innerText();
+            const time = await show.locator('.time.cell').innerText();
+
+            //format the raw date
+            const now = new Date();
+            const currentYear = now.getFullYear();
+            const currentMonth = now.getMonth();
+
+            const monthMap = {
+                'jan': 0, 'feb': 1, 'mar': 2, 'apr': 3,
+                'may': 4, 'jun': 5, 'jul': 6, 'aug': 7,
+                'sep': 8, 'oct': 9, 'nov': 10, 'dec': 11
+            };
+
+            const eventMonthName = month.trim().toLowerCase().substring(0,3);
+            const eventMonthNum = monthMap[eventMonthName];
+
+            // If the event month is less than the current month, assume it's next year
+            let targetYear = currentYear;
+            if (eventMonthNum < currentMonth) {
+                targetYear = currentYear + 1;
+            }
+
+            const rawDateString = `${month.trim()} ${day.trim()}, ${targetYear}`;
+
+            const { title, date, time: cleanTime } = normalizeData(`${rawDateString} ${time}`, eventTitle);
+            const formattedDate = formatDate(date);
+
+            allScrapedData.push({
+                venue: 'Amerant Bank Arena',
+                title: title,
+                date: formattedDate,
+                time: formatTime(cleanTime),
+                type: eventType
+            });
+        }
+        console.log(`Pulling ${eventTitle} as ${eventType}`);
+        } catch (err) {
+            console.log(`Error scraping ${detailUrl}: ${err}`);
+        }
       }
     }
   }
