@@ -258,6 +258,7 @@ async function setupTranscendKiller(page) {
 //========================================
 // SORTING TYPE FUNCTION
 
+// --- CAPITAL ONE TYPE
 function categorizeCapitalOne(title, description) {
     const titleLower = title.toLowerCase();
     const descLower = (description || "").toLowerCase();
@@ -291,7 +292,7 @@ function categorizeCapitalOne(title, description) {
     return 'Other';
 }
 
-
+// --- ENTERPRISE CENTER TYPE
 function categorizeEnterprise(title, description) {
     const titleLower = title.toLowerCase();
     const descLower = (description || "").toLowerCase();
@@ -330,7 +331,7 @@ function categorizeEnterprise(title, description) {
     return 'Other';
 }
 
-
+// --- GO HEELS TYPE
 function categorizeGoHeels(title) {
     const titleLower = title.toLowerCase();
 
@@ -353,7 +354,7 @@ function categorizeGoHeels(title) {
     return 'Other';
 }
 
-// this is sorting type function for Grand Casino
+// --- GRAND CASINO ARENA TYPE
 function assignType(title, description) {
     const titleLower = title.toLowerCase();
     const fullText = (title + " " + description).toLowerCase();
@@ -380,8 +381,40 @@ function assignType(title, description) {
     return 'Other';
 }
 
+//---KFC TYPE
+function categorizeKFC(title, description) {
+    const titleLower = title.toLowerCase();
+    const descLower = (description || "").toLowerCase();
+    const fullText = (titleLower + " " + descLower);
 
+    // 1. NCAA MB (Men's Basketball)
+    if (fullText.includes("men's basketball") || (titleLower.includes('louisville') && titleLower.includes('basketball') && !titleLower.includes('women'))) {
+        return 'NCAA MB';
+    }
 
+    // 2. NCAA WB (Women's Basketball)
+    if (fullText.includes("women's basketball") || titleLower.includes('women\'s basketball')) {
+        return 'NCAA WB';
+    }
+
+    // 3. NCAA WVB (Women's Volleyball)
+    if (fullText.includes("volleyball") || titleLower.includes('volleyball')) {
+        return 'NCAA WVB';
+    }
+
+    // 4. CONCERT
+    const musicKeywords = ['tour', 'album', 'concert', 'live', 'artist', 'band', 'grammy', 'performing', 'music'];
+    if (musicKeywords.some(kw => fullText.includes(kw))) {
+        return 'Concert';
+    }
+
+    // 5. OTHER
+    const otherKeywords = ['disney', 'mickey', 'family', 'kids', 'children', 'expo', 'festival'];
+    if (otherKeywords.some(kw => fullText.includes(kw)) || !musicKeywords.some(kw => fullText.includes(kw))) {
+        return 'Other';
+    }
+    
+}
 
 // =======================================
 
@@ -397,7 +430,8 @@ function assignType(title, description) {
     'https://www.capitalonearena.com/events',
     'https://www.enterprisecenter.com/events',
     'https://goheels.com/sports/mens-basketball/schedule',
-    'https://www.grandcasinoarena.com/events'
+    'https://www.grandcasinoarena.com/events',
+    'https://www.kfcyumcenter.com/events'
   ];
 
   const allScrapedData = [];
@@ -418,13 +452,13 @@ function assignType(title, description) {
       console.log(`\nScraping Capital One Arena...`);
 
       //close popups
-  try { await page.getByRole('button', { name: 'Accept All' }).click({timeout: 5000}); } catch(e) {}
+      try { await page.getByRole('button', { name: 'Accept All' }).click({timeout: 5000}); } catch(e) {}
 
-  //click "more events" until are all loaded
-  while (await page.getByRole('button', { name: 'More Events' }).isVisible()) {
-    await page.getByRole('button', { name: 'More Events' }).click();
-    await page.waitForTimeout(1000);
-  }
+      //click "more events" until are all loaded
+      while (await page.getByRole('button', { name: 'More Events' }).isVisible()) {
+        await page.getByRole('button', { name: 'More Events' }).click();
+        await page.waitForTimeout(1000);
+      }
 
   // 1. First, collect all the event URLs from the main list
   const eventItems = await page.locator('.info.clearfix').all();
@@ -484,7 +518,7 @@ function assignType(title, description) {
   }
 
     // ENTERPRISE CENTER WEBSITE!!!!!?
-} else if (url.includes('enterprisecenter')) {
+    } else if (url.includes('enterprisecenter')) {
       console.log(`\nScraping Enterprise Center...`);
 
       // Wait for the main events list to be loaded
@@ -594,107 +628,107 @@ function assignType(title, description) {
       }
 
 
-  } else if (url.includes('goheels')) {
-      console.log(`\nScraping Go Heels...`);
-      //can't seem to close the cookie consent popup lol
-      await page.evaluate(()=> {
-        const host = document.querySelector('#transcend-consent-manager');
-        if (host) host.remove();
+    } else if (url.includes('goheels')) {
+        console.log(`\nScraping Go Heels...`);
+        //can't seem to close the cookie consent popup lol
+        await page.evaluate(()=> {
+          const host = document.querySelector('#transcend-consent-manager');
+          if (host) host.remove();
 
-        document.documentElement.style.overflow = 'auto';
-        document.body.style.overflow = 'auto';
-        document.body.style.position = 'static';
-      });
-
-      //scroll to the bottom to make sure all game cards are loaded
-      try {
-        await page.evaluate(async () => {
-          await new Promise((resolve) => {
-            let totalHeight = 0;
-            let distance = 100;
-            let timer = setInterval(() => {
-              let scrollHeight = document.body.scrollHeight;
-              window.scrollBy(0, distance);
-              totalHeight += distance;
-              if(totalHeight >= scrollHeight) {
-                clearInterval(timer);
-                resolve();
-              }
-            }, 100);
-          });
+          document.documentElement.style.overflow = 'auto';
+          document.body.style.overflow = 'auto';
+          document.body.style.position = 'static';
         });
-      } catch (e) {
-        console.log('Scrolling failed (page may have navigated or closed), moving on to game card scraping if possible...');
-      }
 
-      //find all game card containers
-      //every game is wrapped in a card
-      const gameCards = await page.locator('.s-game-card__header-inner-top-inner').all();
-      console.log(`Found ${gameCards.length} games!`);
-
-      for (const card of gameCards) {
+        //scroll to the bottom to make sure all game cards are loaded
         try {
-          const opponent = await card.locator('[data-test-id="s-game-card-standard__header-team-opponent-link"]').innerText();
-
-          // try to find the date in the upcoming games section
-          let dateText = '';
-          const upcomingDate = card.locator('[data-test-id="s-game-card-standard__header-game-date"]');
-          const pastDate = card.locator('[data-test-id="s-game-card-standard__header-game-date-details"]');
-
-          if (await upcomingDate.count() > 0) {
-            dateText = await upcomingDate.innerText();
-          } else if (await pastDate.count() > 0) {
-            dateText = await pastDate.innerText();
-          }
-
-          // get time and date
-          const timeText = await card.locator('[data-test-id="s-game-card-standard__header-game-time"]').innerText();
-
-          //Clean up
-          const cleanTitle = `UNC vs ${opponent.trim()}`;
-          const cleanDate = `${dateText.trim()} ${timeText.trim()}`.replace(/\s+/g, ' ');
-
-          console.log(`Successfully grabbed: ${cleanTitle}`);
-
-          // Parse date and time
-          const rawDateAndTime = `${dateText.trim()} ${timeText.trim()}`;
-          let finalDate = rawDateAndTime;
-          let finalTime = 'TBA';
-
-          // Check if there's a time in the format (e.g., "6:30 p.m." or "7 p.m.")
-          const timeMatch = rawDateAndTime.match(/(\d+(?::\d+)?\s*(?:p\.m\.|a\.m\.))/i);
-          if (timeMatch) {
-            // Extract time and convert to uppercase PM/AM
-            finalTime = timeMatch[1].trim()
-              .replace(/p\.m\./i, 'PM')
-              .replace(/a\.m\./i, 'AM')
-              .replace(/\s+/g, ' ')
-              .trim();
-
-
-            finalDate = rawDateAndTime.substring(0, timeMatch.index).trim();
-            if (finalDate && !finalDate.endsWith(',')) {
-              finalDate = finalDate + ',';
-            }
-          }
-
-          const eventType = categorizeGoHeels(cleanTitle);
-
-          const formattedDate = formatGoHeelsDate(finalDate);
-          const dates = expandDateRange(formattedDate, true);
-
-          // Add a row for each date in the range
-          for (const singleDate of dates) {
-            allScrapedData.push({
-              venue: 'Go Heels',
-              title: cleanTitle,
-              date: singleDate,
-              time: formatTime(finalTime),
-              type: eventType
+          await page.evaluate(async () => {
+            await new Promise((resolve) => {
+              let totalHeight = 0;
+              let distance = 100;
+              let timer = setInterval(() => {
+                let scrollHeight = document.body.scrollHeight;
+                window.scrollBy(0, distance);
+                totalHeight += distance;
+                if(totalHeight >= scrollHeight) {
+                  clearInterval(timer);
+                  resolve();
+                }
+              }, 100);
             });
-          }
-        } catch (err) {
-          continue;
+          });
+        } catch (e) {
+          console.log('Scrolling failed (page may have navigated or closed), moving on to game card scraping if possible...');
+        }
+
+        //find all game card containers
+        //every game is wrapped in a card
+        const gameCards = await page.locator('.s-game-card__header-inner-top-inner').all();
+        console.log(`Found ${gameCards.length} games!`);
+
+        for (const card of gameCards) {
+          try {
+            const opponent = await card.locator('[data-test-id="s-game-card-standard__header-team-opponent-link"]').innerText();
+
+            // try to find the date in the upcoming games section
+            let dateText = '';
+            const upcomingDate = card.locator('[data-test-id="s-game-card-standard__header-game-date"]');
+            const pastDate = card.locator('[data-test-id="s-game-card-standard__header-game-date-details"]');
+
+            if (await upcomingDate.count() > 0) {
+              dateText = await upcomingDate.innerText();
+            } else if (await pastDate.count() > 0) {
+              dateText = await pastDate.innerText();
+            }
+
+            // get time and date
+            const timeText = await card.locator('[data-test-id="s-game-card-standard__header-game-time"]').innerText();
+
+            //Clean up
+            const cleanTitle = `UNC vs ${opponent.trim()}`;
+            const cleanDate = `${dateText.trim()} ${timeText.trim()}`.replace(/\s+/g, ' ');
+
+            console.log(`Successfully grabbed: ${cleanTitle}`);
+
+            // Parse date and time
+            const rawDateAndTime = `${dateText.trim()} ${timeText.trim()}`;
+            let finalDate = rawDateAndTime;
+            let finalTime = 'TBA';
+
+            // Check if there's a time in the format (e.g., "6:30 p.m." or "7 p.m.")
+            const timeMatch = rawDateAndTime.match(/(\d+(?::\d+)?\s*(?:p\.m\.|a\.m\.))/i);
+            if (timeMatch) {
+              // Extract time and convert to uppercase PM/AM
+              finalTime = timeMatch[1].trim()
+                .replace(/p\.m\./i, 'PM')
+                .replace(/a\.m\./i, 'AM')
+                .replace(/\s+/g, ' ')
+                .trim();
+
+
+              finalDate = rawDateAndTime.substring(0, timeMatch.index).trim();
+              if (finalDate && !finalDate.endsWith(',')) {
+                finalDate = finalDate + ',';
+              }
+            }
+
+            const eventType = categorizeGoHeels(cleanTitle);
+
+            const formattedDate = formatGoHeelsDate(finalDate);
+            const dates = expandDateRange(formattedDate, true);
+
+            // Add a row for each date in the range
+            for (const singleDate of dates) {
+              allScrapedData.push({
+                venue: 'Go Heels',
+                title: cleanTitle,
+                date: singleDate,
+                time: formatTime(finalTime),
+                type: eventType
+              });
+            }
+          } catch (err) {
+            continue;
         }
       }
     } else if (url.includes('grandcasinoarena')) {
@@ -777,6 +811,87 @@ function assignType(title, description) {
         } catch (err) {
           console.log(`Skipping ${detailUrl}: ${err.message}`);
         }
+      }
+    } else if (url.includes('kfcyumcenter')) {
+      console.log(`\nScraping KFC Yum Center...`);
+
+      // --- LOAD ALL EVENTS ---
+      try {
+        const loadMoreBtn = page.locator('#loadMoreEvents');
+        while (await loadMoreBtn.isVisible()) {
+            await loadMoreBtn.scrollIntoViewIfNeeded();
+            await loadMoreBtn.click();
+            await page.waitForTimeout(1500); // wait for boxes to load
+
+        }
+      } catch (e) {
+        console.log('Finished loading all events.');
+      }
+
+      // --- COLLECT LINKS ---
+      const eventLinks = await page.locator('h3.title a').all();
+      const urlsToVisit = [];
+
+      for (const link of eventLinks) {
+          const href = await link.getAttribute('href');
+          if (href) urlsToVisit.push(href.startsWith('http') ? href : `https://www.kfcyumcenter.com${href}`);
+      }
+      const uniqueUrls = [...new Set(urlsToVisit)].filter(url => url.includes('/events/detail/'));
+      console.log(`Found ${uniqueUrls.length} unique events to deep scrape.`);
+
+      // --- SCRAPING ---
+      for (const detailUrl of uniqueUrls) {
+        try {
+          await page.goto(detailUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+          // grab dynamic content
+          const eventTitle = await page.locator('h1.title').innerText();
+
+          //click 'more info' if it exists to get full keywords
+          try {
+            const moreInfoBtn = page.locator('button.read-more');
+            if (await moreInfoBtn.isVisible()) {
+              await moreInfoBtn.click();
+              await page.waitForTimeout(300);
+            }
+          } catch (e) {}
+
+          const eventDescription = await page.locator('.description_inner').textContent();
+          const eventType = categorizeKFC(eventTitle, eventDescription);
+
+          //find showings
+          const showtimeItems = await page.locator('ul.list li.listItem').all();
+
+          if (showtimeItems.length === 0) {
+            console.log(`No showings found for ${eventTitle}, skipping.`);
+            continue;
+          }
+
+          for (const show of showtimeItems) {
+            //Extract date parts from the nested spans
+            const month = await show.locator('.m-date__month').innerText();
+            const day = await show.locator('.m-date__day').innerText();
+            const time = await show.locator('.time.cell').innerText();
+
+            // format the date time
+            const rawDateString = `${month.trim()} ${day.trim()}, 2026`;
+
+            //clean title/date/time
+            const { title, date, time: cleanTime } = normalizeData(`${rawDateString} ${time}`, eventTitle);
+            const formattedDate = formatDate(date);
+
+            allScrapedData.push({
+              venue: 'KFC Yum! Center',
+              title: title,
+              date: formattedDate,
+              time: formatTime(time),
+              type: eventType
+            });
+          }
+          console.log(`Pulling: ${eventTitle} [${eventType}]`);
+        } catch (err) {
+          console.log(`Error scraping ${detailUrl}: ${err.message}`);
+        } 
       }
     }
   }
