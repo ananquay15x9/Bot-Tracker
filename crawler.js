@@ -519,7 +519,16 @@ function categorizeVillanova(sportCode, opponent) {
     return null; // skil unwanted sports
 }
 
-// =======================================
+// ----- ScottsMiracleGro-Field Type
+function categorizeSMG(text) {
+    const t = text.toLowerCase();
+    if (t.includes('concert') || t.includes('tour') || t.includes('live in')) return 'Concert';
+    if (t.includes('mls next pro') || t.includes('crew 2')) return 'MLS Next Pro';
+    if (t.includes('mls') || t.includes('columbus crew') || t.includes('uswnt')) return 'MLS';
+    return 'Other';
+}
+
+// ======================================================================================
 // Async Capital One Function
 async function scrapeCapitalOne(browser) {
     const page = await browser.newPage();
@@ -1519,12 +1528,116 @@ async function scrapeVillanova(browser) {
     return venueData;
 }
 
+// ScottsMiracleGro Main Function
+async function scrapeSMG(browser) {
+	const page = await browser.newPage();
+    const today = new Date().toISOString().split('T')[0];
+	const venueData = [];
+	try {
+        await setupTranscendKiller(page);
+        await page.goto('https://scottsmiraclegrofield.com/events/');
+        // Main Logic
+        // clear popup
+        try {
+            await page.locator('#onetrust-accept-btn-handler').click({ timeout: 5000 });
+            console.log("Accepted Cookies");
+        } catch (e) {}
+
+        try {
+            await page.locator('.a5-widget-icon-html-close').click({ timeout: 5000 });
+            console.log("Closed AI Chatbot");
+        } catch (e) {}
+
+        // Infinite scroll to load events
+        console.log("Scrolling to load all events...");
+        let previousHeight;
+        while (true) {
+            previousHeight = await page.evaluate('document.body.scrollHeight');
+            await page.evaluate('window.scrollTo(0, document.body.scrollHeight)');
+            await page.waitForTimeout(2000);
+            let newHeight = await page.evaluate('document.body.scrollHeight');
+            if (newHeight === previousHeight) break;
+        }
+
+        // Collect URLs
+        const urls = await page.evaluate(() => {
+            const links = Array.from(document.querySelectorAll('.fusion-image-element a'));
+            return links
+                .map(a => a.href)
+                .filter(href => href.includes('/event/') && !href.includes('host-an-event'));
+        });
+
+        const uniqueUrls = [...new Set(urls)];
+        console.log(`Filtered to ${uniqueUrls.length} valid events. Starting scraping...`)
+
+        const today = new Date().toISOString().split('T')[0];
+
+        for (const url of uniqueUrls) {
+            try {
+                await page.goto(url, { waitUntil: 'load', timeout: 30000 });
+
+            try { await page.locator('#onetrust-accept-btn-handler').first().click({ timeout: 2000 }); } catch(e) {}
+                //Extract title
+                const title = await page.locator('h1').first().innerText();
+
+                //extract date
+                let cleanDate = "TBA";
+                const dateTitle = page.locator('.fusion-title:has-text("Date")').first();
+
+                if (await dateTitle.count() > 0) {
+                    let rawDate = await dateTitle.locator('xpath=following-sibling::div[contains(@class, "fusion-text")]//p').innerText();
+
+                    if (rawDate) {
+                        // CLEANING STEP: If it's one of those "Mar 8at3:00 pm" strings,
+                        // split it at "at" and just take the first part ("Mar 8")
+                        let dateOnly = rawDate.split(/at|\s@/i)[0].trim();
+
+                        if (!dateOnly.toLowerCase().includes('sale')) {
+                            cleanDate = formatDate(`${dateOnly} 2026`);
+                        }
+                    }
+                }
+
+                if (cleanDate < today && cleanDate !== "TBA") continue;
+
+                //extract time
+                let eventTime = "TBA";
+                const timeTitle = page.locator('.fusion-title:has-text("Time")').first();
+                if (await timeTitle.count() > 0) {
+                    const rawTime = await timeTitle.locator('xpath=following-sibling::div[contains(@class, "fusion-text")]//p').innerText();
+                    if (rawTime && !rawTime.toLowerCase().includes('sale')) {
+                        eventTime = formatTime(rawTime.trim());
+                    }
+                }
+
+                // description
+                let description = "";
+                const descLoc = page.locator('.fusion-content-tb').first();
+                if (await descLoc.count() > 0) description = await descLoc.innerText();
+
+                venueData.push({
+                    venue: 'ScottsMiracle-Gro Field',
+                    title: title.trim(),
+                    date: cleanDate,
+                    time: eventTime,
+                    type: categorizeSMG(title + " " + description)
+                });
+                console.log(`Pulling ${title.trim()} [${eventTime}]`);
+            } catch (err) {
+                console.log(`Failed on ${url}: ${err.message.substring(0, 50)}`)
+            }
+        }
+    } catch (e) { console.log(`ScottsMiracleGro-Field failed: ${e.message}`); }
+    await page.close();
+    return venueData;
+}
+
 
 // =======================================================================================
 
 (async () => {
 	const browser = await chromium.launch ({ headless: false });
-	
+
 	//run them one by one to keep memory clean
 	const results = await Promise.all([
 		scrapeCapitalOne(browser),
@@ -1537,7 +1650,8 @@ async function scrapeVillanova(browser) {
         scrapeChartway(browser),
         scrapeFaurotField(browser),
         scrapeTQL(browser),
-        scrapeVillanova(browser)
+        scrapeVillanova(browser),
+        scrapeSMG(browser)
 	]);
 
     // flatten the array
