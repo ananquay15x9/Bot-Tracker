@@ -446,79 +446,6 @@ function categorizeAmerant(title, description) {
     }
 }
 
-// ---- CANADA LIFE CENTRE TYPE
-function categorizeCanadaLifeCentre(title, description) {
-    const fullText = (title + " " + description).toLowerCase();
-
-    // 1. NHL
-    if (fullText.includes('jets') || fullText.includes('nhl')) return 'NHL';
-
-    // 2. AHL
-    if (fullText.includes('moose') || fullText.includes('ahl')) return 'AHL';
-
-    // 3. CEBL
-    if (fullText.includes('sea bears') || fullText.includes('cebl') || fullText.includes('basketball')) return 'CEBL';
-
-    // 4. Concert
-    const musicKeywords = ['concert', 'music', 'live', 'band', 'rock', 'orchestra', 'symphony', 'singer', 'festival', 'album', 'billboard'];
-    if (musicKeywords.some(kw => fullText.includes(kw))) return 'Concert';
-
-    return 'Other';
-}
-
-// ---- CHARTWAY TYPE
-function categorizeChartway(title) {
-    const t = title.toUpperCase();
-    if (t.includes("MEN'S BASKETBALL") || t.includes("ODU MBB")) return 'NCAA MB';
-    if (t.includes("WOMEN'S BASKETBALL") || t.includes("ODU WBB")) return 'NCAA WB';
-    if (t.includes("VOLLEYBALL")) return 'NCAA WVB';
-    if (t.includes("WRESTLING")) return 'Wrestling';
-    if (t.includes("CONCERT") || t.includes("LIVE IN CONCERT")) return 'Concert';
-    return 'Other';
-}
-
-// ---- FAUROT FIELD
-function categorizeFaurotField(opponent) {
-    return 'NCAA Football';
-
-}
-
-// ---- TQL TYPE
-function categorizeTQL(title, categoryText) {
-    const titleLower = title.toLowerCase();
-    const catLower = categoryText.toLowerCase();
-
-    // 1. MLS Next Pro
-        if (titleLower.includes('fc cincinnati 2') || titleLower.includes('next pro')) {
-            return 'MLS Next Pro';             return 'MLS Next Pro';
-        }
-
-        // 2. MLS
-        if (titleLower.includes('fc cincinnati') || catLower.includes('soccer')) {
-            return 'MLS';
-        }
-
-        // 3. Concert
-        if (catLower.includes('concert') || titleLower.includes('tour')) {
-            return 'Concert';
-        }
-
-        // Catch Stadium Tours specifically so they aren't concerts
-        if (titleLower.includes('stadium tour')) {
-                return 'Other';
-            }
-        return 'Other'; // Added default fallback
-}
-
-// VILLANOVA TYPE
-function categorizeVillanova(sportCode, opponent) {
-    const text = (sportCode + " " + opponent).toUpperCase();
-    if (text.includes('MBB')) return 'NCAA MB';
-    if (text.includes('WBB')) return 'NCAA WB';
-    if (text.includes('WVB') || text.includes('VOLLEYBALL')) return 'NCAA WVB';
-    return null; // skil unwanted sports
-}
-
 // =======================================
 // Async Capital One Function
 async function scrapeCapitalOne(browser) {
@@ -527,7 +454,7 @@ async function scrapeCapitalOne(browser) {
     try {
         await page.goto('https://www.capitalonearena.com/events');
         // Capital One Logic
-		console.log(`\nScraping Capital One Arena...`);
+        console.log(`\nScraping Capital One Arena...`);
 
         //close popups
         try { await page.getByRole('button', { name: 'Accept All' }).click({timeout: 5000}); } catch(e) {}
@@ -604,7 +531,7 @@ async function scrapeEnterprise(browser) {
     try {
         await page.goto('https://www.enterprisecenter.com/events');
         // Enterprise logic
-		console.log(`\nScraping Enterprise Center...`);
+        console.log(`\nScraping Enterprise Center...`);
 
         // Wait for the main events list to be loaded
         await page.waitForSelector('#eventsList .event-entry', { timeout: 15000 });
@@ -720,7 +647,7 @@ async function scrapeGoHeels(browser) {
     try {
         await page.goto('https://goheels.com/sports/mens-basketball/schedule');
         // Go Heels logic
-		console.log(`\nScraping Go Heels...`);
+        console.log(`\nScraping Go Heels...`);
         //can't seem to close the cookie consent popup lol
         await page.evaluate(()=> {
             const host = document.querySelector('#transcend-consent-manager');
@@ -811,7 +738,7 @@ async function scrapeGoHeels(browser) {
             // Add a row for each date in the range
             for (const singleDate of dates) {
                 venueData.push({
-                    venue: 'Dean Smith Center (Go Heels)',
+                    venue: 'Go Heels',
                     title: cleanTitle,
                     date: singleDate,
                     time: formatTime(finalTime),
@@ -832,7 +759,7 @@ async function scrapeGrandCasino(browser) {
     try {
         await page.goto('https://www.grandcasinoarena.com/events');
         // Grand Casino Logic
-		// expand the list fully
+        // expand the list fully
         try {
             const loadMoreBtn = page.locator('#loadMoreEvents');
             while (await loadMoreBtn.isVisible() && await loadMoreBtn.isEnabled()) {
@@ -920,7 +847,7 @@ async function scrapeKFC(browser) {
     try {
         await page.goto('https://www.kfcyumcenter.com/events');
         // KFC Logic
-		console.log(`\nScraping KFC Yum Center...`);
+        console.log(`\nScraping KFC Yum Center...`);
 
         // --- LOAD ALL EVENTS ---
         try {
@@ -1005,12 +932,12 @@ async function scrapeKFC(browser) {
 
 // Async Amerant Function
 async function scrapeAmerant(browser) {
-	const page = await browser.newPage();
-	const venueData = [];
-	try {
-	await page.goto('https://www.amerantbankarena.com/events');
-	// Amerant Logic
-	console.log(`\nScraping Amerant Bank Arena...`);
+    const page = await browser.newPage();
+    const venueData = [];
+    try {
+    await page.goto('https://www.amerantbankarena.com/events');
+    // Amerant Logic
+    console.log(`\nScraping Amerant Bank Arena...`);
 
     // LOAD ALL EVENTS
     console.log('Loading all events');
@@ -1098,447 +1025,26 @@ async function scrapeAmerant(browser) {
         console.log(`Pulling ${eventTitle} as ${eventType}`);
     } catch (e) { console.log(`Error scraping event detail: ${e}`); }
 }
-	} catch (e) { console.log("Amerant failed. ", e); 
+    } catch (e) { console.log("Amerant failed. ", e); 
 
     } finally {
-	    await page.close();
+        await page.close();
     }
-	return venueData;
-}
-
-// Canada Life Centre Main Function
-async function scrapeCanadaLifeCentre(browser) {
-	const page = await browser.newPage();
-	const venueData = [];
-	try {
-        await page.goto('https://www.canadalifecentre.ca/events/');
-        // Amerant Logic
-        console.log(`\nScraping Canada Life Centre...`);
-
-        // 1. Collect event data
-        const eventItems = await page.locator('div.rhc-widget-upcoming-item').all();
-        const eventList = [];
-
-        console.log(`Scanning front page... Found ${eventItems.length} events. Extracting details...`);
-
-
-        for (const item of eventItems) {
-            try{
-                const titleLink = item.locator('a.rhc-title-link');
-                const title = (await titleLink.innerText()).trim();
-                const url = await titleLink.getAttribute('href');
-
-                const dateText = await item.locator('.rhc-widget-date').innerText();
-                const timeText = await item.locator('.rhc-widget-time').innerText();
-
-
-                if (url) {
-                    eventList.push({
-                        title,
-                        url,
-                        rawDate: dateText.trim(),
-                        rawTime: timeText.trim()
-                    });
-                }
-            } catch (err) {
-                continue;
-            }
-        }
-
-        console.log(`Found ${eventList.length} events. Processing details...`);
-
-        // 2. SCRAPE
-        for (const event of eventList) {
-            try {
-                await page.goto(event.url, { waitUntil: 'domcontentloaded' });
-
-                const mainArticle = page.locator('article.calendar-events, .rhc-event-wrapper').first();
-
-                let finalDate ="";
-                const metaDateLoc = mainArticle.locator('meta[itemprop="startDate"]');
-
-                if (await metaDateLoc.count() > 0) {
-                    const metaDate = await metaDateLoc.first().getAttribute('content');
-                    finalDate = metaDate.split('T')[0];
-                } else {
-                    finalDate = formatDate(event.rawDate);
-                }
-
-                let finalTime = event.rawTime;
-                const startTimeLoc = mainArticle.locator('.icon-postmeta-fc_start_time .fe-extrainfo-value');
-                if (await startTimeLoc.count() > 0) {
-                    finalTime = await startTimeLoc.innerText();
-                }
-
-                //Grab description
-                let description = "";
-                const metaDescLoc = await page.locator('meta[itemprop="description"]');
-                const metaDesc = (await metaDescLoc.count() > 0)
-                    ? await metaDescLoc.first().getAttribute('content')
-                    : "";
-
-                const articleBody = await mainArticle.innerText() || "";
-                description = `${metaDesc} ${articleBody}`;
-
-                const eventType = categorizeCanadaLifeCentre(event.title, description);
-                venueData.push({
-                    venue: 'Canada Life Centre',
-                    title: event.title,
-                    date: finalDate,
-                    time: formatTime(finalTime),
-                    type: eventType
-                });
-            console.log(`Pulling ${event.title} [${eventType}]`);
-            } catch (e) {
-                console.log(`Error scraping detail for ${event.title}: ${e.message}`);
-            }
-        }
-    } catch (e) { console.log(`Canada Life failed: ${e.message}`); }
-    await page.close();
     return venueData;
 }
-
-// Chartway main Function
-async function scrapeChartway(browser) {
-	const page = await browser.newPage();
-	const venueData = [];
-	try {
-        await page.goto('https://www.chartwayarena.com/events');
-        // Amerant Logic
-        console.log(`\nScraping Chartway Arena...`);
-
-        // CLICK the COOKIE BUTTON (this sucks!)
-        try {
-            const cookieBtn = page.getByRole('button', { name: 'Accept All Cookies' });
-            await cookieBtn.waitFor({ state: 'visible', timeout: 8000 });
-            await cookieBtn.click();
-            await page.waitForTimeout(2000);
-        } catch (e) { console.log("No cookie popup to click."); }
-
-        //expand main list
-        console.log("Expanding event list...");
-        const moreBtn = page.locator('#loadMoreEvents');
-        while (await moreBtn.isVisible()) {
-            await moreBtn.click();
-            console.log("Clicked 'More Events'");
-            await page.waitForTimeout(1500);
-        }
-
-        // Collect URLs from the Images
-        const urls = await page.evaluate(() => {
-            const imageLinks = Array.from(document.querySelectorAll('.eventItem .thumb a'));
-            return imageLinks.map(a => a.href);
-        });
-
-        console.log(`Found ${urls.length} events. Starting pulling...`);
-        const today = new Date().toISOString().split('T')[0];
-
-        // Visit each detail page
-        for (const url of urls) {
-            try {
-                await page.goto(url, { waitUntil: 'load' });
-
-                //Expand
-                const moreDetailsBtn = page.locator('button.read-more').filter({ hasText: 'More Details' });
-                if (await moreDetailsBtn.isVisible()) {
-                    await moreDetailsBtn.click();
-                    await page.waitForTimeout(500); 
-                }
-
-                const title = await page.locator('h1.title').first().innerText();
-
-
-                //Extract from the .showings_date
-                const showingsDateLoc = page.locator('.showings_date').first();
-                const ariaLabel = await showingsDateLoc.getAttribute('aria-label') || "";
-                const yearMatch = ariaLabel.match(/\d{4}/);
-                const dynamicYear = yearMatch ? yearMatch[0] : new Date().getFullYear().toString();
-
-                const month = await showingsDateLoc.locator('.m-date__month').first().innerText();
-                const day = await showingsDateLoc.locator('.m-date__day').first().innerText();
-
-                const cleanDate = formatDate(`${month} ${day} ${dynamicYear}`);
-
-                if (cleanDate < today) continue;
-
-                // Extract Time from .m-date__hour (Handles the "@ 8:00PM" format)
-                let eventTime = "TBA";
-                const hourLoc = showingsDateLoc.locator('.m-date__hour').first();
-                
-                if (await hourLoc.count() > 0) {
-                    const rawHour = await hourLoc.innerText();
-                    eventTime = rawHour.replace('@', '').trim();
-                }
-
-                const description = await page.locator('.description_inner').first().innerText();
-
-                venueData.push({
-                    venue: 'Chartway Arena',
-                    title: title.trim(),
-                    date: cleanDate,
-                    time: formatTime(eventTime),
-                    type: categorizeChartway(title + " " + description)
-                });
-
-                console.log(`Pulling ${title.trim()} [${cleanDate}]`);
-            } catch (err) {
-                console.log(`Failed on ${url}: ${err.message.substring(0, 50)}`);
-            }
-        }
-        
-    } catch (e) { console.log(`Chartway failed: ${e.message}`); }
-    await page.close();
-    return venueData;
-}
-
-// Faurot Field Main Function
-async function scrapeFaurotField(browser) {
-	const page = await browser.newPage();
-	const venueData = [];
-	try {
-        await setupTranscendKiller(page);
-        await page.goto('https://mutigers.com/sports/football/schedule/2026');
-        // Amerant Logic
-        console.log(`\nScraping Faurot Field...`);
-
-        const today = new Date().toISOString().split('T')[0];
-
-        // Wait to load
-        await page.waitForSelector('[data-test-id="s-game-card-standard__root"]');
-
-        // target all game cards
-        const gameCards = await page.locator('[data-test-id="s-game-card-standard__root"]').all();
-        console.log(`Found ${gameCards.length} scheduled games.`);
-
-        for (const card of gameCards) {
-            try {
-                // VENUE & LOCATION CHECK
-                const venueLoc = card.locator('[data-test-id*="game-facility-title-link"]');
-                const cityLoc = card.locator('[data-test-id*="standard-location-details"]');
-                
-                if (await venueLoc.count() === 0) continue;
-                
-                const venueName = await venueLoc.innerText();
-                const cityText = await cityLoc.innerText();
-
-                // Only pull if it's at Faurot Field in Columbia, MO
-                if (venueName.includes('Faurot Field') && cityText.includes('Columbia')) {
-                
-                const opponent = await card.locator('[data-test-id="s-game-card-standard__header-team-opponent-link"]').innerText();
-
-                    // time extraction
-                    let rawDate = "";
-                    const futureDateLoc = card.locator('[data-test-id="s-game-card-standard__header-game-date"]');
-                    const pastDateLoc = card.locator('[data-test-id="s-game-card-standard__header-game-date-details"]');
-
-                    if (await pastDateLoc.count() > 0) {
-                        // This handles the 2025 completed game layout
-                        rawDate = await pastDateLoc.innerText();
-                    } else {
-                        // This handles the 2026 upcoming game layout
-                        rawDate = await futureDateLoc.innerText();
-                    }
-
-                    // 3. DUAL TIME EXTRACTION
-                    let gameTime = "TBA";
-                    const timeLoc = card.locator('[aria-label="Event Time"]');
-                    if (await timeLoc.count() > 0) {
-                        gameTime = await timeLoc.innerText();
-                    }
-
-                    // Determine year based on URL or current context
-                    const yearStr = page.url().includes('2025') ? '2025' : '2026';
-                    const cleanDate = formatDate(`${rawDate} ${yearStr}`);
-
-                    venueData.push({
-                        venue: 'Mizzou: Faurot Field',
-                        title: `Missouri vs ${opponent.trim()}`,
-                        date: cleanDate,
-                        time: formatTime(gameTime),
-                        type: 'NCAA Football'
-                    });
-                    console.log(`Pulling Missouri vs ${opponent.trim()} on ${cleanDate} at ${formatTime(gameTime)}`);
-                }
-            } catch (err) {
-                console.log(`Error processing a game card: ${err.message}`);
-            }
-        }
-        
-    } catch (e) { console.log(`Faurot Field failed: ${e.message}`); }
-    await page.close();
-    return venueData;
-}
-
-// TQL Main Function
-async function scrapeTQL(browser) {
-	const page = await browser.newPage();
-    const today = new Date().toISOString().split('T')[0];
-	const venueData = [];
-	try {
-        await setupTranscendKiller(page);
-        await page.goto('https://tqlstadium.com/events');
-        // Main Logic
-        console.log(`\nScraping TQL...`);
-
-        // Event containers
-        const eventItems = await page.locator('.eventlist-column-info').all();
-        console.log(`Found ${eventItems.length} events at TQL Stadium.`);
-
-        for (const item of eventItems) {
-            try {
-                const title = await item.locator('.eventlist-title-link').innerText();
-                const categoryText = await item.locator('.eventlist-cats').innerText();
-                const rawDate = await item.locator('time.event-date').getAttribute('datetime');
-
-                // Skip past events
-                if (rawDate < today) {
-                    console.log(`Skipping past event: ${title} on ${rawDate}`);
-                    continue;
-                }
-
-                // Grab start time only
-                const rawTime = await item.locator('.event-time-localized-start').innerText();
-
-                const eventType = categorizeTQL(title, categoryText);
-
-                venueData.push({
-                    venue: 'TQL Stadium',
-                    title: title.trim(),
-                    date: rawDate,
-                    time: formatTime(rawTime.trim()),
-                    type: eventType
-                });
-                console.log(`Pulling ${title.trim()} [${eventType}]`);
-            } catch (err) {
-                console.log(`Error processing an event: ${err.message}`);
-                continue;
-            }
-        }  
-        
-    } catch (e) { console.log(`TQL failed: ${e.message}`); }
-    await page.close();
-    return venueData;
-}
-
-// Villanova Main Function
-async function scrapeVillanova(browser) {
-	const page = await browser.newPage();
-    const today = new Date().toISOString().split('T')[0];
-	const venueData = [];
-	try {
-        await setupTranscendKiller(page);
-        await page.goto('https://villanova.com/calendar');
-        // Main Logic
-        console.log(`\nScraping Villanova...`);
-
-        const monthsToScrape = 12; //Full year
-
-        //====SCRAPE DATA FOR 12 MONTHS====//
-        for (let i = 0; i < monthsToScrape; i++) {
-            // wait for the month to be ready
-            const header = page.locator('span[data-bind*="formatDate: selectedDate"]').first();
-            await header.waitFor({ state: 'visible' });
-            const monthYearText = await header.innerText();
-
-            console.log(`Scraping: ${monthYearText}`);
-
-            // EXPAND ALL HIDDEN EVENTS (GOD DAMMIT)
-            const expandButtons = await page.locator('button.sidearm-calendar-table-cell-toggle-button').all();
-            console.log(`Expanding ${expandButtons.length} days...`);
-
-            for (const btn of expandButtons) {
-                try {
-                    // Some buttons might already be expanded or hidden
-                    if (await btn.isVisible()) {
-                        await btn.click();
-                    }
-                } catch (e) {
-                    continue;
-                }
-            }
-
-            await page.waitForTimeout(1000);
-
-
-            // scrape the grid
-            const dayCells = await page.locator('.sidearm-calendar-table-cell').all();
-            for (const cell of dayCells) {
-                const dayNumLoc = cell.locator('time[data-bind*="format: \'D\'"]');
-                if (await dayNumLoc.count() === 0) continue;
-
-                const dayNum = await dayNumLoc.innerText();
-                const cleanDate = formatDate(`${monthYearText.split(' ')[0]} ${dayNum} ${monthYearText.split(' ')[1]}`);
-                if (cleanDate < today) continue;
-
-                const events = await cell.locator('ul.sidearm-calendar-table-cell-events li.sidearm-calendar-table-cell-event').all();
-                
-                for (const event of events) {
-                    try {
-                        const sportCode = await event.locator('span[data-bind*="sport.short_display"]').innerText();
-                        const opponent = await event.locator('span[data-bind*="opponent.title"]').innerText();
-                        
-                        // 1. APPLY TARGETED SPORT FILTER
-                        const eventType = categorizeVillanova(sportCode, opponent);
-                        
-                        // If the sport isn't MBB, WBB, or WVB, skip it 
-                        if (!eventType) continue;
-
-                        // 2. GREEDY TIME EXTRACTION
-                        const eventText = await event.innerText();
-                        let finalTime = "TBA";
-                        const timeMatch = eventText.match(/(\d{1,2}(:\d{2})?\s*(?:p\.m\.|a\.m\.|AM|PM))/i);
-                        if (timeMatch) finalTime = timeMatch[1];
-
-                        // 3. PUSH DATA
-                        venueData.push({
-                            venue: 'Finneran Pavilion (Villanova)',
-                            title: `${sportCode} vs ${opponent}`,
-                            date: cleanDate,
-                            time: formatTime(finalTime),
-                            type: eventType
-                        });
-                        console.log(`   > Targeted Pulled: ${sportCode} vs ${opponent}`);
-
-                    } catch (err) { continue; }
-                }
-            }
-
-            // Move to next month and wait for transition
-            await page.locator('button.slick-next').first().click();
-            // wait for header to change so we don't scrape the same month again
-            await page.waitForFunction(
-                (old, sel) => document.querySelector(sel)?.innerText !== old,
-                monthYearText,
-                'span[data-bind*="formatDate: selectedDate"]'
-            );
-            await page.waitForTimeout(1500);
-        }
-        
-    } catch (e) { console.log(`Villanova failed: ${e.message}`); }
-    await page.close();
-    return venueData;
-}
-
-
-// =======================================================================================
 
 (async () => {
-	const browser = await chromium.launch ({ headless: false });
-	
-	//run them one by one to keep memory clean
-	const results = await Promise.all([
-		scrapeCapitalOne(browser),
-		scrapeEnterprise(browser),
-		scrapeGoHeels(browser),
+    const browser = await chromium.launch ({ headless: false });
+    
+    //run them one by one to keep memory clean
+    const results = await Promise.all([
+        scrapeCapitalOne(browser),
+        scrapeEnterprise(browser),
+        scrapeGoHeels(browser),
         scrapeGrandCasino(browser),
-		scrapeKFC(browser),
-		scrapeAmerant(browser),
-        scrapeCanadaLifeCentre(browser),
-        scrapeChartway(browser),
-        scrapeFaurotField(browser),
-        scrapeTQL(browser),
-        scrapeVillanova(browser)
-	]);
+        scrapeKFC(browser),
+        scrapeAmerant(browser),
+    ]);
 
     // flatten the array
     const allData = results.flat();
@@ -1557,8 +1063,8 @@ async function scrapeVillanova(browser) {
             { id: 'type', title: 'TYPE' }
         ]
     });
-	
-	// write the data
+    
+    // write the data
     if (allData.length > 0) {
         await csvWriter.writeRecords(allData);
         console.log('Done! All events saved to calendar.csv');
@@ -1566,5 +1072,5 @@ async function scrapeVillanova(browser) {
         console.log('No data to write to CSV.');
     }
 
-	await browser.close();
+    await browser.close();
 })();
