@@ -1480,16 +1480,16 @@ async function scrapeVillanova(browser) {
                 if (cleanDate < today) continue;
 
                 const events = await cell.locator('ul.sidearm-calendar-table-cell-events li.sidearm-calendar-table-cell-event').all();
-                
+
                 for (const event of events) {
                     try {
                         const sportCode = await event.locator('span[data-bind*="sport.short_display"]').innerText();
                         const opponent = await event.locator('span[data-bind*="opponent.title"]').innerText();
-                        
+
                         // 1. APPLY TARGETED SPORT FILTER
                         const eventType = categorizeVillanova(sportCode, opponent);
-                        
-                        // If the sport isn't MBB, WBB, or WVB, skip it 
+
+                        // If the sport isn't MBB, WBB, or WVB, skip it
                         if (!eventType) continue;
 
                         // 2. GREEDY TIME EXTRACTION
@@ -1522,7 +1522,7 @@ async function scrapeVillanova(browser) {
             );
             await page.waitForTimeout(1500);
         }
-        
+
     } catch (e) { console.log(`Villanova failed: ${e.message}`); }
     await page.close();
     return venueData;
@@ -1662,7 +1662,7 @@ async function scrapeSMG(browser) {
 
     // write to CSV
     const csvWriter = createCsvWriter({
-        path: 'calendar.csv', 
+        path: 'calendar-1.csv',
         header: [
             { id: 'venue', title: 'VENUE' },
             { id: 'title', title: 'EVENT NAME' },
@@ -1671,11 +1671,11 @@ async function scrapeSMG(browser) {
             { id: 'type', title: 'TYPE' }
         ]
     });
-	
+
 	// write the data
     if (allData.length > 0) {
         await csvWriter.writeRecords(allData);
-        console.log('Done! All events saved to calendar.csv');
+        console.log('Done! All events saved to calendar-1.csv');
     } else {
         console.log('No data to write to CSV.');
     }

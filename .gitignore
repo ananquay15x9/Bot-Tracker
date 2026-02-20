@@ -8,3 +8,5 @@ node_modules/
 /playwright/.auth/
 events.csv
 calendar.csv
+calendar-1.csv
+calendar-2.csv
