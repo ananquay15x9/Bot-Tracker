@@ -271,6 +271,19 @@ function categorizeJBJ(sport, title) {
     return 'Other';
 }
 
+// VIRGINIA TECH - CASSELL COLISEUM EVENT TYPE
+function categorizeVT(btnText, opponent) {
+    const text = (btnText + " " + opponent).toUpperCase();
+
+    // identify sport
+    if (text.includes("WOMEN'S BASKETBALL")) return 'NCAA WB';
+    if (text.includes("MEN'S BASKETBALL")) return 'NCAA MB';
+    if (text.includes('VOLLEYBALL')) return 'NCAA WVB';
+    if (text.includes('WRESTLING') || text.includes('ACC CHAMPIONSHIPS')) return 'Wrestling';
+    if (text.includes('CONCERT')) return 'Concert';
+    return 'Other';
+}
+
 // ======================================================================================
 // 
 async function scrapeJPJ(browser) {
@@ -351,7 +364,115 @@ async function scrapeJPJ(browser) {
     return venueData;
 }
 
+// Virginia Tech - Cassell Coliseum Main Function
+async function scrapeVT(browser) {
+    const page = await browser.newPage();
+    const venueData = [];
+    const monthsToScrape = 12;
+    const today = new Date().toISOString().split('T')[0];
+    try {
+        await page.goto('https://hokiesports.com/all-sports-schedule?view=calendar&type=home', { waitUntil: 'networkidle' });
 
+        // VT Logic
+        console.log(`\nVirginia Tech - Cassell Coliseum...`);
+
+        try {
+        const acceptBtn = page.getByRole('button', { name: 'Accept' });
+        if (await acceptBtn.isVisible({ timeout: 3000 })) await acceptBtn.click();
+        await page.evaluate(() => {
+            const b = document.getElementById('iubenda-cs-banner');
+            if (b) b.remove();
+        }).catch(() => {});
+    } catch(e) {}
+    console.log("Clicked 'Accepted Cookies")
+
+
+    // jan 2026
+    let currentMonth = await page.locator('.schedule-calendar-navigation__month').first().innerText();
+    while (!currentMonth.includes('January 2026')) {
+            const prevBtn = page.locator('.schedule-calendar-navigation__button').first();
+            await prevBtn.dispatchEvent('click');
+            await page.waitForTimeout(500);
+            currentMonth = await page.locator('.schedule-calendar-navigation__month').first().innerText();
+        }
+
+        for (let i = 0; i < monthsToScrape; i++) {
+            const header = page.locator('.schedule-calendar-navigation__month').first();
+            const monthYearText = await header.innerText();
+            console.log(`Pulling: ${monthYearText}`);
+
+            // wait for events to load in the DOM
+            await page.waitForSelector('.schedule-calendar-event', { timeout: 5000 }).catch(() => {});
+
+            const dayCells = await page.locator('.schedule-calendar-day').all();
+
+            for (const cell of dayCells) {
+                const dayNumLoc = cell.locator('.schedule-calendar-day__number');
+                if (await dayNumLoc.count() === 0) continue;
+
+                const dayNum = await dayNumLoc.innerText();
+                const cleanDate = formatDate(`${monthYearText.split(' ')[0]} ${dayNum} ${monthYearText.split(' ')[1]}`);
+
+                const events = await cell.locator('.schedule-calendar-event').all();
+
+                for (const event of events) {
+                    try {
+                        const details = event.locator('.schedule-calendar-event-details');
+
+                        // only Cassell Coliseum
+                        const location = await details.locator('.schedule-event-location').innerText();
+                        if (!location.includes('Cassell Coliseum')) continue;
+
+                        // get opponent name
+                        const teamLocators = details.locator('.schedule-calendar-event-details-teams__team-name');
+                        const teamCount = await teamLocators.count();
+
+                        let opponent = "TBA";
+                        if (teamCount > 1) {
+                            //opponent name
+                            opponent = await teamLocators.nth(1).innerText();
+                        } else if (teamCount === 1) {
+                            opponent = await teamLocators.first().innerText();
+                        }
+
+                        if (opponent.includes('Tech Talk Live') || opponent.includes('Hokie Sports Weekly')) {
+                            continue;
+                        }
+
+                        const btnText = await event.locator('.schedule-calendar-event__button').innerText();
+                        const eventType = categorizeVT(btnText, opponent);
+
+                        let finalTime = "TBA";
+                        const timeMatch = btnText.match(/(\d{1,2}(:\d{2})?\s*(?:PM|AM))/i);
+                        if (timeMatch) finalTime = timeMatch[1];
+
+                        venueData.push({
+                            venue: 'Virginia Tech - Cassell Coliseum',
+                            title: `Virginia Tech vs. ${opponent} (${btnText.split('-')[1]?.trim() || 'Event'})`,
+                            date: cleanDate,
+                            time: formatTime(finalTime),
+                            type: eventType
+                        });
+                        console.log(`Pulling: ${cleanDate} - ${opponent.trim()} [${eventType}]`);
+
+                    } catch (e) { continue; }
+                }
+            }
+
+            // Move to Next Month
+            const nextBtn = page.locator('.schedule-calendar-navigation__button').last();
+            await nextBtn.dispatchEvent('click');
+            await page.waitForFunction(
+                (old) => document.querySelector('.schedule-calendar-navigation__month').innerText !== old,
+                monthYearText
+            ).catch(() => {});
+            await page.waitForTimeout(1000);
+        }
+
+    } catch (e) { console.log("Virginia Tech - Cassell Coliseum failed: ", e); }
+    await page.close();
+    return venueData;
+}
 
 // =======================================================================================
 
@@ -360,7 +481,8 @@ async function scrapeJPJ(browser) {
 
     //run them one by one to keep memory clean
     const results = await Promise.all([
-        scrapeJPJ(browser)
+        scrapeJPJ(browser),
+        scrapeVT(browser)
     ]);
 
     // flatten the array
