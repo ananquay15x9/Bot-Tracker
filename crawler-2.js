@@ -284,8 +284,28 @@ function categorizeVT(btnText, opponent) {
     return 'Other';
 }
 
+// BRYCE JORDAN CENTER ENVENT TYPE
+function categorizeBJC(title, description) {
+    const fullText = (title + " " + (description || "")).toLowerCase();
+
+    //NCAA MB
+    if (fullText.includes('penn state vs.')) {
+        return 'NCAA MB';
+    }
+    //Wrestling
+    if (fullText.includes('wrestling')) {
+        return 'Wrestling';
+    }
+    //Concert
+    if (fullText.includes('tour') || fullText.includes('live') || fullText.includes('presents')) {
+        if (fullText.includes('monster trucks')) return 'Other';
+        return 'Concert';
+    }
+    return 'Other';
+}
+
 // ======================================================================================
-// 
+//===== JPJ Main Function
 async function scrapeJPJ(browser) {
     const page = await browser.newPage();
     const venueData = [];
@@ -364,7 +384,7 @@ async function scrapeJPJ(browser) {
     return venueData;
 }
 
-// Virginia Tech - Cassell Coliseum Main Function
+// =====Virginia Tech - Cassell Coliseum Main Function
 async function scrapeVT(browser) {
     const page = await browser.newPage();
     const venueData = [];
@@ -474,6 +494,89 @@ async function scrapeVT(browser) {
     return venueData;
 }
 
+// =====BJC Main Function
+async function scrapeBJC(browser) {
+    const page = await browser.newPage();
+    const venueData = [];
+    const today = new Date().toISOString().split('T')[0];
+    try {
+        await page.goto('https://bjc.psu.edu/upcoming-events', { waitUntil: 'domcontentloaded' });
+
+        // VT Logic
+        console.log("Crawling Bryce Jordan Center...")
+        // close chatbot immediately
+        await page.addStyleTag({ content: '.satisfi_btn, .satisfi_container, #satisfi_chat_container { display: none !important; }' });
+
+        const urls = await page.evaluate(() => {
+            return Array.from(document.querySelectorAll('.main-event-image a')).map(a => a.href);
+        });
+        const uniqueUrls = [...new Set(urls)];
+
+        for (const url of uniqueUrls) {
+            try {
+                await page.goto(url, { waitUntil: 'domcontentloaded' });
+                await page.addStyleTag({ content: '.satisfi_btn, .satisfi_container { display: none !important; }' });
+
+                const rawTitle = await page.locator('h1.p20').innerText();
+                const cleanTitle = rawTitle.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+                const description = await page.locator('.description.grey').innerText().catch(() => "");
+
+                // look for dates
+                const dateBlocks = page.locator('.event-date');
+                const count = await dateBlocks.count();
+
+                const seenEntries = new Set();
+
+                for (let i = 0; i < count; i++) {
+                    const block = dateBlocks.nth(i);
+                    const rawDate = await block.locator('.date').innerText();
+                    const timeText = await block.locator('.time').innerText();
+                    const startsMatch = timeText.match(/Starts:\s*(.*)/i);
+
+                    const cleanDate = formatDate(rawDate);
+                    const eventTime = startsMatch ? formatTime(startsMatch[1]) : "TBA";
+
+                    const uniqueKey = `${cleanDate}|${eventTime}`;
+
+                    if (!seenEntries.has(uniqueKey)) {
+                        if (cleanDate >= today || cleanDate === "TBA") {
+                            venueData.push({
+                                venue: 'Penn State: Bryce Jordan Center',
+                                title: cleanTitle,
+                                date: cleanDate,
+                                time: eventTime,
+                                type: categorizeBJC(cleanTitle, description)
+                            });
+                            seenEntries.add(uniqueKey);
+                        }
+                    }
+                }
+                // if no date found, then fallback
+                if (seenEntries.size === 0) {
+                    const sidebarDate = await page.locator('.sidebar-content-item:has-text("Date") .right').innerText().catch(() => null);
+                    if (sidebarDate) {
+                        const rawTime = await page.locator('.sidebar-content-item:has-text("Time") .right').innerText().catch(() => "TBA");
+                        const cleanDate = formatDate(sidebarDate);
+                        venueData.push({
+                            venue: 'Penn State: Bryce Jordan Center',
+                            title: cleanTitle,
+                            date: cleanDate,
+                            time: formatTime(rawTime),
+                            type: categorizeBJC(cleanTitle, description)
+                        });
+                    }
+                }
+                console.log(`Pulling: ${cleanTitle}`);
+
+            } catch (err) {
+                console.log(`Failed: ${url}`);
+            }
+        }
+
+    } catch (e) { console.log("Bryce Jordan Center failed: ", e); }
+    await page.close();
+    return venueData;
+}
 // =======================================================================================
 
 (async () => {
@@ -482,7 +585,8 @@ async function scrapeVT(browser) {
     //run them one by one to keep memory clean
     const results = await Promise.all([
         scrapeJPJ(browser),
-        scrapeVT(browser)
+        scrapeVT(browser),
+        scrapeBJC(browser)
     ]);
 
     // flatten the array
