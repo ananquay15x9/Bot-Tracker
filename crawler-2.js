@@ -304,6 +304,16 @@ function categorizeBJC(title, description) {
     return 'Other';
 }
 
+// AMERICA FIRST FIELD EVENT TYPE
+function categorizeAmericaFF(title, description) {
+    const t = title.toLowerCase();
+    if (t.includes('real salt lake') || t.includes('rsl')) return 'MLS';
+    if (t.includes('utah royals')) return 'NWSL';
+    if (t.includes('real monarchs')) return 'MLS Next Pro';
+    if (t.includes('concert') || t.includes('tour')) return 'Concert';
+    return 'Other';
+}
+
 // ======================================================================================
 //===== JPJ Main Function
 async function scrapeJPJ(browser) {
@@ -577,6 +587,78 @@ async function scrapeBJC(browser) {
     await page.close();
     return venueData;
 }
+
+// =====BJC Main Function
+function formatSimpleDate(monthStr, dayStr) {
+    const monthMap = {
+        'JAN': '01', 'FEB': '02', 'MAR': '03', 'APR': '04',
+        'MAY': '05', 'JUN': '06', 'JUL': '07', 'AUG': '08',
+        'SEP': '09', 'OCT': '10', 'NOV': '11', 'DEC': '12'
+    };
+    const month = monthMap[monthStr.toUpperCase()] || '01';
+    const day = dayStr.padStart(2, '0');
+    return `2026-${month}-${day}`;
+}
+
+//The date is correct, but the time is fake due to how complex this site is.
+
+function categorizeAndAssignTime(title) {
+    const t = title.toLowerCase();
+    
+    // Default categorizations
+    if (t.includes('tour') || t.includes('yellowcard') || t.includes('kahan') || t.includes('souls')) {
+        return { type: 'Concert', time: '7:00 PM' };
+    }
+    if (t.includes('breakaway') || t.includes('nation') || t.includes('homecoming')) {
+        return { type: 'Other', time: '6:00 PM' };
+    }
+    
+    return { type: 'Other', time: 'TBA' };
+}
+
+async function scrapeAmericaFF(browser) {
+    const page = await browser.newPage();
+    const venueData = [];
+    const today = new Date().toISOString().split('T')[0];
+    try {
+        await page.goto('https://americafirstfield.com/event-calendar/', { waitUntil: 'domcontentloaded' });
+
+        // BJC Logic
+        //close cookie popup
+    const cookieBtn = page.locator('#onetrust-accept-btn-handler');
+    if (await cookieBtn.isVisible()) await cookieBtn.click();
+
+    const events = [];
+    const articles = page.locator('article.event');
+    const count = await articles.count();
+
+    for (let i = 0; i < count; i++) {
+        const art = articles.nth(i);
+
+        const rawTitle = await art.locator('.event-title').innerText();
+        const month = await art.locator('.event-month').innerText();
+        const day = await art.locator('.event-day').innerText();
+        
+        const cleanDate = formatSimpleDate(month, day);
+        const { type, time } = categorizeAndAssignTime(rawTitle);
+        const desc = await art.locator('.event-des').innerText();
+        const timeMatch = desc.match(/(\d{1,2}:\d{2}\s?[APM]{2})/i);
+        if (timeMatch) time = timeMatch[1];
+
+        venueData.push({
+            venue: 'America First Field',
+            title: rawTitle.trim(),
+            date: cleanDate,
+            time: time,
+            type: type
+        });
+    }
+
+    } catch (e) { console.log("America First Field failed: ", e); }
+    await page.close();
+    return venueData;
+}
+
 // =======================================================================================
 
 (async () => {
@@ -586,7 +668,8 @@ async function scrapeBJC(browser) {
     const results = await Promise.all([
         scrapeJPJ(browser),
         scrapeVT(browser),
-        scrapeBJC(browser)
+        scrapeBJC(browser),
+        scrapeAmericaFF(browser)
     ]);
 
     // flatten the array
