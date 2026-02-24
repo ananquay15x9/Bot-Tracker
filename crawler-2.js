@@ -659,6 +659,81 @@ async function scrapeAmericaFF(browser) {
     return venueData;
 }
 
+// RSL MAIN FUNCTION
+async function scrapeRSL(browser) {
+    const page = await browser.newPage();
+    let finalData = [];
+    const today = new Date().toISOString().split('T')[0];
+    try {
+        console.log("Navigating to RSL Schedule...");
+        await page.goto('https://www.rsl.com/schedule/#competition=all&date=2026-02-08');
+
+        // RSL logic
+        //close cookie popup
+    try {
+        await page.waitForSelector('.mls-c-match-list__match', { timeout: 15000 });
+        console.log("Data detected on page.");
+    } catch (e) {
+        console.log("Timeout: Matches didn't load.");
+        await browser.close();
+        return;
+    }
+
+    const rawData = await page.$$eval('.mls-c-match-list__match', (elements) => {
+        return elements.map(el => {
+            // get month year
+            const section = el.closest('.mls-c-match-list__section');
+            const header = section ? section.querySelector('h2') : null;
+            const yearMatch = header ? header.innerText.match(/\d{4}/) : null;
+            const year = yearMatch ? yearMatch[0] : "2026";
+
+            // get date
+            const dateStr = el.querySelector('.mls-c-status-stamp__status')?.innerText || "";
+            const timeStr = el.querySelector('.mls-c-scorebug span')?.innerText || "TBA";
+
+            // get team
+            const teamSpans = Array.from(el.querySelectorAll('.mls-c-club__shortname'));
+            const home = teamSpans[0]?.innerText || "Home TBD";
+            const away = teamSpans[1]?.innerText || "Away TBD";
+
+            // info
+            const infoPs = Array.from(el.querySelectorAll('.mls-c-match-list__match-info p'));
+            const competition = infoPs[0]?.innerText || "";
+            const venue = infoPs[infoPs.length - 1]?.innerText || "";
+
+            return { year, dateStr, timeStr, home, away, competition, venue };
+        });
+    });
+
+    finalData = rawData
+        .filter(item => item.venue.toLowerCase().includes('america first field')) // ONLY America First Field
+        .map(item => {
+            const [m, d] = item.dateStr.split('/');
+            const cleanDate = `${item.year}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+
+            let type = 'Other';
+            const comp = item.competition.toLowerCase();
+            if (comp.includes('mls')) type = 'MLS';
+            if (comp.includes('next pro')) type = 'MLS Next Pro';
+            if (comp.includes('nwsl')) type = 'NWSL';
+
+            return {
+                venue: 'America First Field',
+                title: `${item.home} vs. ${item.away} (${item.competition})`,
+                date: cleanDate,
+                time: item.timeStr.replace(/\s/g, '').toUpperCase(),
+                type: type
+            };
+        });
+
+    console.log(`Found ${rawData.length} total matches. Only kept ${venueData.length} at America First Field.`);
+
+
+    } catch (e) { console.log("RSL failed: ", e); }
+    await page.close();
+    return finalData;
+}
+
 // =======================================================================================
 
 (async () => {
@@ -669,7 +744,8 @@ async function scrapeAmericaFF(browser) {
         scrapeJPJ(browser),
         scrapeVT(browser),
         scrapeBJC(browser),
-        scrapeAmericaFF(browser)
+        scrapeAmericaFF(browser),
+        scrapeRSL(browser)
     ]);
 
     // flatten the array
