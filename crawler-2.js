@@ -314,6 +314,16 @@ function categorizeAmericaFF(title, description) {
     return 'Other';
 }
 
+// RSLW EVENT TYPE
+function categorizeRSLW(title) {
+    const t = title.toLowerCase();
+    if (t.includes('real salt lake') || t.includes('rsl')) return 'MLS';
+    if (t.includes('utah royals')) return 'NWSL';
+    if (t.includes('real monarchs')) return 'MLS Next Pro';
+    if (t.includes('concert') || t.includes('tour')) return 'Concert';
+    return 'Other';
+}
+
 // ======================================================================================
 //===== JPJ Main Function
 async function scrapeJPJ(browser) {
@@ -734,6 +744,60 @@ async function scrapeRSL(browser) {
     return finalData;
 }
 
+// RSLW MAIN FUNCTION
+async function scrapeRSLW(browser) {
+    const page = await browser.newPage();
+    const today = new Date().toISOString().split('T')[0];
+    let royalsData = []
+    try {
+        console.log("Navigating to Utah Royals Schedule...");
+        await page.goto('https://www.rsl.com/utahroyals/schedule/#competition=all&date=2024-11-01');
+
+        // RSLW Logic
+        try {
+        await page.waitForSelector('tr', { timeout: 10000 });
+    } catch (e) {
+        console.log("Table rows not found.");
+        await browser.close();
+        return;
+    }
+
+    const rawRows = await page.$$eval('tr', (rows) => {
+        return rows.map(row => {
+            const date = row.querySelector('td[data-label="Date"]')?.innerText || "";
+            const home = row.querySelector('td[data-label="Home Team"]')?.innerText || "";
+            const away = row.querySelector('td[data-label="Away Team"]')?.innerText || "";
+            const time = row.querySelector('td[data-label="Time"]')?.innerText || "";
+            const place = row.querySelector('td[data-label="Place"]')?.innerText || "";
+
+            return { date, home, away, time, place };
+        });
+    });
+
+    royalsData = rawRows
+        // only take america first field otherwise skip
+        .filter(item =>
+            item.place.toLowerCase().includes('america first field') &&
+            item.home.trim() !== ""
+        )
+        .map(item => {
+            const fullTitle = `${item.home} vs. ${item.away}`;
+            return {
+                venue: 'America First Field',
+                title: fullTitle,
+                date: formatDate(item.date),
+                time: formatTime(item.time),
+                type: categorizeRSLW(fullTitle)
+            };
+        });
+
+    console.log(`Pulling ${royalsData.length} home games.`);
+
+    } catch (e) { console.log("Utah Royals failed: ", e); }
+    await page.close();
+    return royalsData;
+}
+
 // =======================================================================================
 
 (async () => {
@@ -745,7 +809,8 @@ async function scrapeRSL(browser) {
         scrapeVT(browser),
         scrapeBJC(browser),
         scrapeAmericaFF(browser),
-        scrapeRSL(browser)
+        scrapeRSL(browser),
+        scrapeRSLW(browser)
     ]);
 
     // flatten the array
