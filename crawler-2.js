@@ -324,6 +324,47 @@ function categorizeRSLW(title) {
     return 'Other';
 }
 
+// Neville Arena Gymnastics Event Type
+function categorizeAuburn(sportText) {
+    const s = sportText.toLowerCase();
+    if (s.includes('men\'s basketball')) return 'NCAA MB';
+    if (s.includes('women\'s basketball')) return 'NCAA WB';
+    if (s.includes('volleyball')) return 'NCAA WVB';
+    if (s.includes('gymnastics')) return 'Gymnastics';
+    return 'Other';
+}
+
+// Baylor Transcend Killer
+async function setupTranscendKiller(page) {
+    await page.addInitScript(() => {
+        const kill = () => {
+            const host = document.querySelector('#transcend-consent-manager');
+            if (host) host.remove();
+            document.documentElement.style.setProperty('overflow', 'auto', 'important');
+            document.body.style.setProperty('overflow', 'auto', 'important');
+            document.body.style.setProperty('position', 'static', 'important');
+        };
+        kill();
+        const obs = new MutationObserver(() => kill());
+        obs.observe(document.documentElement, { childList: true, subtree: true });
+    });
+
+    await page.route('**/*', (route) => {
+        const u = route.request().url();
+        const type = route.request().resourceType();
+        
+        // Block only the heavy media and the consent manager
+        if (
+            u.includes('transcend-cdn.com') || 
+            u.includes('transcend.io') || 
+            ['image', 'media', 'font'].includes(type)
+        ) {
+            return route.abort();
+        }
+        return route.continue();
+    });
+}
+
 // ======================================================================================
 //===== JPJ Main Function
 async function scrapeJPJ(browser) {
@@ -672,7 +713,7 @@ async function scrapeAmericaFF(browser) {
 // RSL MAIN FUNCTION
 async function scrapeRSL(browser) {
     const page = await browser.newPage();
-    let finalData = [];
+    let rslResults = [];
     const today = new Date().toISOString().split('T')[0];
     try {
         console.log("Navigating to RSL Schedule...");
@@ -680,68 +721,68 @@ async function scrapeRSL(browser) {
 
         // RSL logic
         //close cookie popup
-    try {
-        await page.waitForSelector('.mls-c-match-list__match', { timeout: 15000 });
-        console.log("Data detected on page.");
-    } catch (e) {
-        console.log("Timeout: Matches didn't load.");
-        await browser.close();
-        return;
-    }
+        try {
+            await page.waitForSelector('.mls-c-match-list__match', { timeout: 15000 });
+            console.log("Data detected on page.");
+        } catch (e) {
+            console.log("Timeout: Matches didn't load.");
+            await browser.close();
+            return;
+        }
 
-    const rawData = await page.$$eval('.mls-c-match-list__match', (elements) => {
-        return elements.map(el => {
-            // get month year
-            const section = el.closest('.mls-c-match-list__section');
-            const header = section ? section.querySelector('h2') : null;
-            const yearMatch = header ? header.innerText.match(/\d{4}/) : null;
-            const year = yearMatch ? yearMatch[0] : "2026";
+        const rawData = await page.$$eval('.mls-c-match-list__match', (elements) => {
+            return elements.map(el => {
+                // get month year
+                const section = el.closest('.mls-c-match-list__section');
+                const header = section ? section.querySelector('h2') : null;
+                const yearMatch = header ? header.innerText.match(/\d{4}/) : null;
+                const year = yearMatch ? yearMatch[0] : "2026";
 
-            // get date
-            const dateStr = el.querySelector('.mls-c-status-stamp__status')?.innerText || "";
-            const timeStr = el.querySelector('.mls-c-scorebug span')?.innerText || "TBA";
+                // get date
+                const dateStr = el.querySelector('.mls-c-status-stamp__status')?.innerText || "";
+                const timeStr = el.querySelector('.mls-c-scorebug span')?.innerText || "TBA";
 
-            // get team
-            const teamSpans = Array.from(el.querySelectorAll('.mls-c-club__shortname'));
-            const home = teamSpans[0]?.innerText || "Home TBD";
-            const away = teamSpans[1]?.innerText || "Away TBD";
+                // get team
+                const teamSpans = Array.from(el.querySelectorAll('.mls-c-club__shortname'));
+                const home = teamSpans[0]?.innerText || "Home TBD";
+                const away = teamSpans[1]?.innerText || "Away TBD";
 
-            // info
-            const infoPs = Array.from(el.querySelectorAll('.mls-c-match-list__match-info p'));
-            const competition = infoPs[0]?.innerText || "";
-            const venue = infoPs[infoPs.length - 1]?.innerText || "";
+                // info
+                const infoPs = Array.from(el.querySelectorAll('.mls-c-match-list__match-info p'));
+                const competition = infoPs[0]?.innerText || "";
+                const venue = infoPs[infoPs.length - 1]?.innerText || "";
 
-            return { year, dateStr, timeStr, home, away, competition, venue };
-        });
-    });
-
-    finalData = rawData
-        .filter(item => item.venue.toLowerCase().includes('america first field')) // ONLY America First Field
-        .map(item => {
-            const [m, d] = item.dateStr.split('/');
-            const cleanDate = `${item.year}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
-
-            let type = 'Other';
-            const comp = item.competition.toLowerCase();
-            if (comp.includes('mls')) type = 'MLS';
-            if (comp.includes('next pro')) type = 'MLS Next Pro';
-            if (comp.includes('nwsl')) type = 'NWSL';
-
-            return {
-                venue: 'America First Field',
-                title: `${item.home} vs. ${item.away} (${item.competition})`,
-                date: cleanDate,
-                time: item.timeStr.replace(/\s/g, '').toUpperCase(),
-                type: type
-            };
+                return { year, dateStr, timeStr, home, away, competition, venue };
+            });
         });
 
-    console.log(`Found ${rawData.length} total matches. Only kept ${venueData.length} at America First Field.`);
+        rslResults = rawData
+            .filter(item => item.venue.toLowerCase().includes('america first field')) // ONLY America First Field
+            .map(item => {
+                const [m, d] = item.dateStr.split('/');
+                const cleanDate = `${item.year}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+
+                let type = 'Other';
+                const comp = item.competition.toLowerCase();
+                if (comp.includes('mls')) type = 'MLS';
+                if (comp.includes('next pro')) type = 'MLS Next Pro';
+                if (comp.includes('nwsl')) type = 'NWSL';
+
+                return {
+                    venue: 'America First Field',
+                    title: `${item.home} vs. ${item.away} (${item.competition})`,
+                    date: cleanDate,
+                    time: item.timeStr.replace(/\s/g, '').toUpperCase(),
+                    type: type
+                };
+            });
+
+        console.log(`Found ${rawData.length} total matches. Only kept ${rslResults.length} at America First Field.`);
 
 
     } catch (e) { console.log("RSL failed: ", e); }
     await page.close();
-    return finalData;
+    return rslResults;
 }
 
 // RSLW MAIN FUNCTION
@@ -798,6 +839,323 @@ async function scrapeRSLW(browser) {
     return royalsData;
 }
 
+// Auburn Gymnastics Main Function
+async function scrapeNAGym(browser) {
+    const page = await browser.newPage();
+    let finalResults = [];
+
+    try {
+        console.log("Navigating to Neville Arena Schedule...");
+        await page.goto('https://auburntigers.com/all-sports-schedule?type=home&sport-id=8');
+        // Nagym Logic
+        //load wait
+        await page.waitForTimeout(5000);
+
+        //cookies
+        try {
+            const cookieBtn = page.locator('button.iubenda-cs-accept-btn');
+            if (await cookieBtn.isVisible({ timeout: 5000 })) {
+                await cookieBtn.click();
+                console.log("Cookies accepted.");
+                await page.waitForTimeout(2000);
+            }
+        } catch (e) {
+            console.log("No cookie banner found, moving on...");
+        }
+
+        await page.waitForSelector('.schedule-event-item', { timeout: 10000 });
+
+        let venueData = await page.$$eval('.schedule-event-item', (events) => {
+                return events.map(event => {
+                    const dateDay = event.querySelector('.schedule-event-date__day')?.innerText || "";
+                    const opponent = event.querySelector('.schedule-event-item__opponent-name')?.innerText || "";
+                    const locationRow = event.querySelector('.schedule-event-item__location');
+                    const venue = locationRow ? locationRow.innerText : "";
+                    const time = event.querySelector('.schedule-event-item-result__label')?.innerText || "";
+                    const sport = event.querySelector('.schedule-event-item__sport-name')?.innerText || "";
+                    return { dateDay, opponent, venue, time, sport };
+                });
+            });
+
+        const cleanedData = venueData
+                .filter(item => item.venue.toLowerCase().includes('neville arena'))
+                .map(item => {
+                    const title = `Auburn vs. ${item.opponent}`;
+                    return {
+                        venue: 'Neville Arena',
+                        title: title,
+                        date: formatDate(item.dateDay),
+                        time: formatTime(item.time),
+                        type: 'Gymnastics'
+                    };
+                });
+
+            finalResults = cleanedData;
+            console.log(`Pulling ${finalResults.length} events at Neville Arena.`);
+
+        } catch (e) { console.log("Neville Arena - Gymnastics failed: ", e); }
+        await page.close();
+        return finalResults;
+    }
+
+// Auburn Women Basketball Main Function
+async function scrapeNAMB(browser) {
+    const page = await browser.newPage();
+    let finalResults = [];
+
+    try {
+        console.log("Navigating to Neville Arena Schedule...");
+        await page.goto('https://auburntigers.com/all-sports-schedule?type=home&sport-id=9');
+        // Nagym Logic
+        //load wait
+        await page.waitForTimeout(5000);
+
+        //cookies
+        try {
+            const cookieBtn = page.locator('button.iubenda-cs-accept-btn');
+            if (await cookieBtn.isVisible({ timeout: 5000 })) {
+                await cookieBtn.click();
+                console.log("Cookies accepted.");
+                await page.waitForTimeout(2000);
+            }
+        } catch (e) {
+            console.log("No cookie banner found, moving on...");
+        }
+
+        await page.waitForSelector('.schedule-event-item', { timeout: 10000 });
+
+        let venueData = await page.$$eval('.schedule-event-item', (events) => {
+                return events.map(event => {
+                    const dateDay = event.querySelector('.schedule-event-date__day')?.innerText || "";
+                    const opponent = event.querySelector('.schedule-event-item__opponent-name')?.innerText || "";
+                    const locationRow = event.querySelector('.schedule-event-item__location');
+                    const venue = locationRow ? locationRow.innerText : "";
+                    const time = event.querySelector('.schedule-event-item-result__label')?.innerText || "";
+                    const sport = event.querySelector('.schedule-event-item__sport-name')?.innerText || "";
+                    return { dateDay, opponent, venue, time, sport };
+                });
+            });
+
+        const cleanedData = venueData
+                .filter(item => item.venue.toLowerCase().includes('neville arena'))
+                .map(item => {
+                    const title = `Auburn vs. ${item.opponent}`;
+                    return {
+                        venue: 'Neville Arena',
+                        title: title,
+                        date: formatDate(item.dateDay),
+                        time: formatTime(item.time),
+                        type: 'NCAA MB'
+                    };
+                });
+
+            finalResults = cleanedData;
+            console.log(`Pulling ${finalResults.length} events at Neville Arena.`);
+
+        } catch (e) { console.log("Neville Arena - Men's Basketball failed: ", e); }
+        await page.close();
+        return finalResults;
+    }
+
+// Auburn Women's Basketball Main Function
+async function scrapeNAWB(browser) {
+    const page = await browser.newPage();
+    let finalResults = [];
+
+    try {
+        console.log("Navigating to Neville Arena Schedule...");
+        await page.goto('https://auburntigers.com/all-sports-schedule?type=home&sport-id=18');
+        // Nagym Logic
+        //load wait
+        await page.waitForTimeout(5000);
+
+        //cookies
+        try {
+            const cookieBtn = page.locator('button.iubenda-cs-accept-btn');
+            if (await cookieBtn.isVisible({ timeout: 5000 })) {
+                await cookieBtn.click();
+                console.log("Cookies accepted.");
+                await page.waitForTimeout(2000);
+            }
+        } catch (e) {
+            console.log("No cookie banner found, moving on...");
+        }
+
+        await page.waitForSelector('.schedule-event-item', { timeout: 10000 });
+
+        let venueData = await page.$$eval('.schedule-event-item', (events) => {
+                return events.map(event => {
+                    const dateDay = event.querySelector('.schedule-event-date__day')?.innerText || "";
+                    const opponent = event.querySelector('.schedule-event-item__opponent-name')?.innerText || "";
+                    const locationRow = event.querySelector('.schedule-event-item__location');
+                    const venue = locationRow ? locationRow.innerText : "";
+                    const time = event.querySelector('.schedule-event-item-result__label')?.innerText || "";
+                    const sport = event.querySelector('.schedule-event-item__sport-name')?.innerText || "";
+                    return { dateDay, opponent, venue, time, sport };
+                });
+            });
+
+        const cleanedData = venueData
+                .filter(item => item.venue.toLowerCase().includes('neville arena'))
+                .map(item => {
+                    const title = `Auburn vs. ${item.opponent}`;
+                    return {
+                        venue: 'Neville Arena',
+                        title: title,
+                        date: formatDate(item.dateDay),
+                        time: formatTime(item.time),
+                        type: 'NCAA WB'
+                    };
+                });
+
+            finalResults = cleanedData;
+            console.log(`Pulling ${finalResults.length} events at Neville Arena.`);
+
+        } catch (e) { console.log("Neville Arena - Women's Basketball failed: ", e); }
+        await page.close();
+        return finalResults;
+    }
+
+// Auburn Women Volleyball Main Function
+async function scrapeNAWVB(browser) {
+    const page = await browser.newPage();
+    let finalResults = [];
+
+    try {
+        console.log("Navigating to Neville Arena Schedule...");
+        await page.goto('https://auburntigers.com/all-sports-schedule?type=home&sport-id=17');
+        // Nagym Logic
+        //load wait
+        await page.waitForTimeout(5000);
+
+        //cookies
+        try {
+            const cookieBtn = page.locator('button.iubenda-cs-accept-btn');
+            if (await cookieBtn.isVisible({ timeout: 5000 })) {
+                await cookieBtn.click();
+                console.log("Cookies accepted.");
+                await page.waitForTimeout(2000);
+            }
+        } catch (e) {
+            console.log("No cookie banner found, moving on...");
+        }
+
+        await page.waitForSelector('.schedule-event-item', { timeout: 10000 });
+
+        let venueData = await page.$$eval('.schedule-event-item', (events) => {
+                return events.map(event => {
+                    const dateDay = event.querySelector('.schedule-event-date__day')?.innerText || "";
+                    const opponent = event.querySelector('.schedule-event-item__opponent-name')?.innerText || "";
+                    const locationRow = event.querySelector('.schedule-event-item__location');
+                    const venue = locationRow ? locationRow.innerText : "";
+                    const time = event.querySelector('.schedule-event-item-result__label')?.innerText || "";
+                    const sport = event.querySelector('.schedule-event-item__sport-name')?.innerText || "";
+                    return { dateDay, opponent, venue, time, sport };
+                });
+            });
+
+        const cleanedData = venueData
+                .filter(item => item.venue.toLowerCase().includes('neville arena'))
+                .map(item => {
+                    const title = `Auburn vs. ${item.opponent}`;
+                    return {
+                        venue: 'Neville Arena',
+                        title: title,
+                        date: formatDate(item.dateDay),
+                        time: formatTime(item.time),
+                        type: 'NCAA WB'
+                    };
+                });
+
+            finalResults = cleanedData;
+            console.log(`Pulling ${finalResults.length} events at Neville Arena.`);
+
+        } catch (e) { console.log("Neville Arena - Women's Volleyball failed: ", e); }
+        await page.close();
+        return finalResults;
+    }
+
+// BAYLOR MAIN FUNCTION
+async function scrapeBaylor(browser)  {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await setupTranscendKiller(page);
+
+    let BaylorResult = [];
+
+    try {
+        console.log("Navigating to Baylor Bears Calendar...");
+        await page.goto('https://baylorbears.com/calendar', { waitUntil: 'domcontentloaded' });
+        await page.waitForTimeout(3000);
+
+        for (let m = 0; m < 13; m++) {
+            const monthTitle = await page.locator('.fc-toolbar-title').innerText();
+            console.log(`Pulling: ${monthTitle}`);
+
+            const eventHarnesses = page.locator('.fc-daygrid-event-harness');
+            const count = await eventHarnesses.count();
+
+            for (let i = 0; i < count; i++) {
+                const harness = eventHarnesses.nth(i);
+                const text = await harness.innerText();
+
+                if (text.includes('WBB') || text.includes('MBB') || text.includes('CONCERT')) {
+                    try {
+                        await harness.click({ force: true });
+
+                        await page.waitForSelector('.c-calendar-modal__wrapper', { state: 'visible', timeout: 5000 });
+                        await page.waitForTimeout(1000);
+
+                        const rawDate = await page.locator('.s-text-heading-small').first().innerText();
+                        const cards = page.locator('[data-test-id="s-game-card-standard__root"]');
+                        const cardCount = await cards.count();
+
+                        for (let j = 0; j < cardCount; j++) {
+                            const card = cards.nth(j);
+                            const cardText = await card.innerText();
+
+                            if (cardText.toLowerCase().includes('foster pavilion')) {
+                                const opponent = await card.locator('[data-test-id="s-game-card-standard__header-team-opponent-link"]').innerText();
+                                const sportCode = await card.locator('.mx-\\[4px\\]').innerText();
+
+                                const timeElem = card.locator('[aria-label="Event Time"]');
+                                let rawTime = "TBA";
+                                if (await timeElem.count() > 0) {
+                                    rawTime = await timeElem.innerText();
+                                }
+
+                                let type = 'Other';
+                                if (sportCode.includes('MBB')) type = 'NCAA MB';
+                                if (sportCode.includes('WBB')) type = 'NCAA WB';
+
+                                BaylorResult.push({
+                                    venue: 'Foster Pavilion',
+                                    title: `Baylor vs. ${opponent}`,
+                                    date: formatDate(rawDate),
+                                    time: formatTime(rawTime),
+                                    type: type
+                                });
+                                console.log(`Pulling: ${opponent} (${sportCode})`);
+                            }
+                        }
+
+                        await page.locator('button:has-text("Close")').first().click();
+                        await page.waitForTimeout(600);
+                    } catch (err) {
+                        await page.keyboard.press('Escape');
+                    }
+                }
+            }
+            await page.getByTitle('Next month').click();
+            await page.waitForTimeout(2000);
+        }
+
+        } catch (e) { console.log("Baylor failed: ", e); }
+        await page.close();
+        return BaylorResult;
+    }
+
+
 // =======================================================================================
 
 (async () => {
@@ -810,7 +1168,12 @@ async function scrapeRSLW(browser) {
         scrapeBJC(browser),
         scrapeAmericaFF(browser),
         scrapeRSL(browser),
-        scrapeRSLW(browser)
+        scrapeRSLW(browser),
+        scrapeNAGym(browser),
+        scrapeNAMB(browser),
+        scrapeNAWB(browser),
+        scrapeNAWVB(browser),
+        scrapeBaylor(browser)
     ]);
 
     // flatten the array
