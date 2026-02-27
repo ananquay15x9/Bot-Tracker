@@ -1152,6 +1152,7 @@ async function scrapeBaylor(browser)  {
 
         } catch (e) { console.log("Baylor failed: ", e); }
         await page.close();
+        await context.close();
         return BaylorResult;
     }
 
