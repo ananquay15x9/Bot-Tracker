@@ -450,43 +450,42 @@ async function scrapeVT(browser) {
     const page = await browser.newPage();
     const venueData = [];
     const monthsToScrape = 12;
+    const currentYear = new Date().getFullYear();
+    const targetStartMonth = `January ${currentYear}`;
     const today = new Date().toISOString().split('T')[0];
+
     try {
         await page.goto('https://hokiesports.com/all-sports-schedule?view=calendar&type=home', { waitUntil: 'networkidle' });
 
-        // VT Logic
         console.log(`\nVirginia Tech - Cassell Coliseum...`);
 
         try {
-        const acceptBtn = page.getByRole('button', { name: 'Accept' });
-        if (await acceptBtn.isVisible({ timeout: 3000 })) await acceptBtn.click();
-        await page.evaluate(() => {
-            const b = document.getElementById('iubenda-cs-banner');
-            if (b) b.remove();
-        }).catch(() => {});
-    } catch(e) {}
-    console.log("Clicked 'Accepted Cookies")
+            const acceptBtn = page.getByRole('button', { name: 'Accept' });
+            if (await acceptBtn.isVisible({ timeout: 3000 })) await acceptBtn.click();
+        } catch(e) {}
 
+        let header = page.locator('.schedule-calendar-navigation__month').first();
+        let monthYearText = await header.innerText();
+        let safetyCounter = 0;
 
-    // jan 2026
-    let currentMonth = await page.locator('.schedule-calendar-navigation__month').first().innerText();
-    while (!currentMonth.includes('January 2026')) {
-            const prevBtn = page.locator('.schedule-calendar-navigation__button').first();
-            await prevBtn.dispatchEvent('click');
-            await page.waitForTimeout(500);
-            currentMonth = await page.locator('.schedule-calendar-navigation__month').first().innerText();
+        while (!monthYearText.includes(targetStartMonth) && safetyCounter < 12) {
+            const currentMonthIndex = new Date(Date.parse(monthYearText.split(' ')[0] + " 1, 2012")).getMonth();            const navBtn = currentMonthIndex > 0
+                ? page.locator('.schedule-calendar-navigation__button').first() // Prev
+                : page.locator('.schedule-calendar-navigation__button').last(); // Next
+
+            await navBtn.dispatchEvent('click');
+            await page.waitForTimeout(800);
+            monthYearText = await header.innerText();
+            safetyCounter++;
         }
 
         for (let i = 0; i < monthsToScrape; i++) {
-            const header = page.locator('.schedule-calendar-navigation__month').first();
-            const monthYearText = await header.innerText();
+            monthYearText = await header.innerText();
             console.log(`Pulling: ${monthYearText}`);
 
-            // wait for events to load in the DOM
             await page.waitForSelector('.schedule-calendar-event', { timeout: 5000 }).catch(() => {});
 
             const dayCells = await page.locator('.schedule-calendar-day').all();
-
             for (const cell of dayCells) {
                 const dayNumLoc = cell.locator('.schedule-calendar-day__number');
                 if (await dayNumLoc.count() === 0) continue;
@@ -495,30 +494,18 @@ async function scrapeVT(browser) {
                 const cleanDate = formatDate(`${monthYearText.split(' ')[0]} ${dayNum} ${monthYearText.split(' ')[1]}`);
 
                 const events = await cell.locator('.schedule-calendar-event').all();
-
                 for (const event of events) {
                     try {
                         const details = event.locator('.schedule-calendar-event-details');
-
-                        // only Cassell Coliseum
                         const location = await details.locator('.schedule-event-location').innerText();
                         if (!location.includes('Cassell Coliseum')) continue;
 
-                        // get opponent name
                         const teamLocators = details.locator('.schedule-calendar-event-details-teams__team-name');
                         const teamCount = await teamLocators.count();
 
-                        let opponent = "TBA";
-                        if (teamCount > 1) {
-                            //opponent name
-                            opponent = await teamLocators.nth(1).innerText();
-                        } else if (teamCount === 1) {
-                            opponent = await teamLocators.first().innerText();
-                        }
+                        let opponent = teamCount > 1 ? await teamLocators.nth(1).innerText() : await teamLocators.first().innerText();
 
-                        if (opponent.includes('Tech Talk Live') || opponent.includes('Hokie Sports Weekly')) {
-                            continue;
-                        }
+                        if (opponent.includes('Tech Talk Live') || opponent.includes('Hokie Sports Weekly')) continue;
 
                         const btnText = await event.locator('.schedule-calendar-event__button').innerText();
                         const eventType = categorizeVT(btnText, opponent);
@@ -534,19 +521,12 @@ async function scrapeVT(browser) {
                             time: formatTime(finalTime),
                             type: eventType
                         });
-                        console.log(`Pulling: ${cleanDate} - ${opponent.trim()} [${eventType}]`);
-
                     } catch (e) { continue; }
                 }
             }
 
-            // Move to Next Month
             const nextBtn = page.locator('.schedule-calendar-navigation__button').last();
             await nextBtn.dispatchEvent('click');
-            await page.waitForFunction(
-                (old) => document.querySelector('.schedule-calendar-navigation__month').innerText !== old,
-                monthYearText
-            ).catch(() => {});
             await page.waitForTimeout(1000);
         }
 
