@@ -599,6 +599,297 @@ async function scrapeXfinityE(browser)  {
         return venueData;
     }
 
+// Mizzou Arena - Men's Basketball Main FUNCTION
+// KILL TRANSCEND
+async function setupTranscendKillerMizzouMB(page) {
+    await page.addInitScript(() => {
+        const kill = () => {
+            const host = document.querySelector('#transcend-consent-manager');
+            if (host) host.remove();
+            document.documentElement.style.overflow = 'auto';
+            document.body.style.overflow = 'auto';
+            document.body.style.position = 'static';
+        };
+        kill();
+        const obs = new MutationObserver(() => kill());
+        obs.observe(document.documentElement, { childList: true, subtree: true });
+    });
+
+    await page.route('**/*', (route) => {
+        const u = route.request().url();
+        if (u.includes('transcend-cdn.com/cm/') || u.includes('transcend.io')) {
+            return route.abort();
+        }
+        return route.continue();
+    });
+}
+
+function formatTimeMMB(rawTime) {
+    if (!rawTime || rawTime.toLowerCase().includes('tba')) return 'TBA';
+
+    // 1. Remove periods (p.m. -> pm)
+    let clean = rawTime.replace(/\./g, '').toLowerCase().trim();
+
+    // 2. Standardize AM/PM casing and spacing
+    // This turns "7 pm" or "7:30 pm" into "7:00PM" or "7:30PM"
+    let formatted = clean.replace(/\s*(am|pm)/i, (match, p1) => p1.toUpperCase());
+
+    // 3. Ensure minutes exist (7PM -> 7:00PM)
+    if (!formatted.includes(':') && (formatted.includes('AM') || formatted.includes('PM'))) {
+        formatted = formatted.replace(/(\d+)/, '$1:00');
+    }
+
+    return formatted;
+}
+
+async function scrapeMizzouMB(browser) {
+	const page = await browser.newPage();
+    await setupTranscendKillerMizzouMB(page);
+
+	await page.goto('https://mutigers.com/sports/mens-basketball/schedule/2025-26');
+
+    const venueDataMMB = [];
+
+    await page.waitForSelector('[data-test-id="s-game-card-standard__root"]');
+
+    const gameCards = await page.locator('[data-test-id="s-game-card-standard__root"]').all();
+    console.log(`Found ${gameCards.length} scheduled games.`);
+
+    for (const card of gameCards) {
+        try {
+            const venueLoc = card.locator('[data-test-id*="game-facility-title-link"]');
+            const cityLoc = card.locator('[data-test-id*="standard-location-details"]');
+
+            if (await venueLoc.count() === 0) continue;
+
+            const venueName = await venueLoc.innerText();
+            const cityText = await cityLoc.innerText();
+
+            if (venueName.includes('Mizzou Arena') && cityText.includes('Columbia')) {
+
+                const opponent = await card.locator('[data-test-id="s-game-card-standard__header-team-opponent-link"]').innerText();
+
+                // 1. DATE EXTRACTION
+                let rawDate = "";
+                const futureDateLoc = card.locator('[data-test-id="s-game-card-standard__header-game-date"]');
+                const pastDateLoc = card.locator('[data-test-id="s-game-card-standard__header-game-date-details"]');
+
+                if (await pastDateLoc.count() > 0) {
+                    rawDate = await pastDateLoc.innerText();
+                } else {
+                    rawDate = await futureDateLoc.innerText();
+                }
+
+
+                const month = rawDate.split(' ')[0];
+                const yearStr = (month === 'Nov' || month === 'Dec') ? '2025' : '2026';
+                const cleanDate = formatDate(`${rawDate} ${yearStr}`);
+
+
+                let gameTime = "TBA";
+                const timeLoc = card.locator('[aria-label="Event Time"]');
+                if (await timeLoc.count() > 0) {
+                    gameTime = await timeLoc.innerText();
+                }
+
+                venueDataMMB.push({
+                    venue: 'Mizzou Arena',
+                    title: `Missouri vs ${opponent.trim()}`,
+                    date: cleanDate,
+                    time: formatTimeMMB(gameTime),
+                    type: 'NCAA MB'
+                });
+
+                console.log(`Pulling Mizzou MBB vs ${opponent.trim()} on ${cleanDate}`);
+            }
+
+        } catch (e) { console.log(`Mizzou Arena Men's Basketball failed: ${e.message}`); }
+    }
+        await page.close();
+        return venueDataMMB;
+}
+
+// MIZZOU ARENA WOMEN BASKETBALL MAIN FUNCTION
+async function setupTranscendKillerMWB(page) {
+    await page.addInitScript(() => {
+        const kill = () => {
+            const host = document.querySelector('#transcend-consent-manager');
+            if (host) host.remove();
+            document.documentElement.style.overflow = 'auto';
+            document.body.style.overflow = 'auto';
+            document.body.style.position = 'static';
+        };
+        kill();
+        const obs = new MutationObserver(() => kill());
+        obs.observe(document.documentElement, { childList: true, subtree: true });
+    });
+
+    await page.route('**/*', (route) => {
+        const u = route.request().url();
+        if (u.includes('transcend-cdn.com/cm/') || u.includes('transcend.io')) {
+            return route.abort();
+        }
+        return route.continue();
+    });
+}
+
+function formatTimeMWB(rawTime) {
+    if (!rawTime || rawTime.toLowerCase().includes('tba')) return 'TBA';
+
+    // 1. Remove periods (p.m. -> pm)
+    let clean = rawTime.replace(/\./g, '').toLowerCase().trim();
+
+    // 2. Standardize AM/PM casing and spacing
+    // This turns "7 pm" or "7:30 pm" into "7:00PM" or "7:30PM"
+    let formatted = clean.replace(/\s*(am|pm)/i, (match, p1) => p1.toUpperCase());
+
+    // 3. Ensure minutes exist (7PM -> 7:00PM)
+    if (!formatted.includes(':') && (formatted.includes('AM') || formatted.includes('PM'))) {
+        formatted = formatted.replace(/(\d+)/, '$1:00');
+    }
+
+    return formatted;
+}
+
+async function scrapeMizzouWB(browser) {
+	const page = await browser.newPage();
+    await setupTranscendKillerMWB(page);
+
+	await page.goto('https://mutigers.com/sports/womens-basketball/schedule/2025');
+
+    const venueDataMWB = [];
+
+    await page.waitForSelector('[data-test-id="s-game-card-standard__root"]');
+
+    const gameCards = await page.locator('[data-test-id="s-game-card-standard__root"]').all();
+    console.log(`Found ${gameCards.length} scheduled games.`);
+
+    for (const card of gameCards) {
+        try {
+            const venueLoc = card.locator('[data-test-id*="game-facility-title-link"]');
+            const cityLoc = card.locator('[data-test-id*="standard-location-details"]');
+
+            if (await venueLoc.count() === 0) continue;
+
+            const venueName = await venueLoc.innerText();
+            const cityText = await cityLoc.innerText();
+
+            if (venueName.includes('Mizzou Arena') && cityText.includes('Columbia')) {
+
+                const opponent = await card.locator('[data-test-id="s-game-card-standard__header-team-opponent-link"]').innerText();
+
+
+                let rawDate = "";
+                const futureDateLoc = card.locator('[data-test-id="s-game-card-standard__header-game-date"]');
+                const pastDateLoc = card.locator('[data-test-id="s-game-card-standard__header-game-date-details"]');
+
+                if (await pastDateLoc.count() > 0) {
+                    rawDate = await pastDateLoc.innerText();
+                } else {
+                    rawDate = await futureDateLoc.innerText();
+                }
+
+
+                const month = rawDate.split(' ')[0];
+                const yearStr = (month === 'Nov' || month === 'Dec') ? '2025' : '2026';
+                const cleanDate = formatDate(`${rawDate} ${yearStr}`);
+
+
+                let gameTime = "TBA";
+                const timeLoc = card.locator('[aria-label="Event Time"]');
+                if (await timeLoc.count() > 0) {
+                    gameTime = await timeLoc.innerText();
+                }
+
+                venueDataMWB.push({
+                    venue: 'Mizzou Arena',
+                    title: `Missouri vs ${opponent.trim()}`,
+                    date: cleanDate,
+                    time: formatTimeMWB(gameTime),
+                    type: 'NCAA WB'
+                });
+
+                console.log(`Pulling Mizzou WB vs ${opponent.trim()} on ${cleanDate}`);
+            }
+
+        } catch (e) { console.log(`Mizzou Arena Women's Basketball failed: ${e.message}`); }
+    }
+        await page.close();
+        return venueDataMWB;
+}
+
+// MIZZOU ARENA EVENTS MAIN FUNCTION
+async function scrapeMizzouE(browser) {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    let venueDataME = [];
+
+    try {
+        console.log("Navigating to Mizzou Arena Ticketmaster...");
+
+        await page.goto('https://www.ticketmaster.com/mizzou-arena-tickets-columbia/venue/50091', {
+            waitUntil: 'domcontentloaded'
+        });
+
+        await page.waitForSelector('.gCZRzf', { timeout: 15000 });
+
+        const events = await page.evaluate(() => {
+            const results = [];
+            const items = document.querySelectorAll('.gCZRzf');
+
+            items.forEach(item => {
+
+                const hiddenSpans = Array.from(item.querySelectorAll('.VisuallyHidden-sc-8buqks-0 span'));
+
+                const dateRaw = hiddenSpans[0]?.innerText || "";
+                const timeRaw = hiddenSpans[1]?.innerText || "";
+                const title = hiddenSpans[2]?.innerText || item.querySelector('.gRLkJL')?.innerText || "";
+
+                results.push({ dateRaw, timeRaw, title });
+            });
+            return results;
+        });
+
+        for (const ev of events) {
+            if (!ev.title) continue;
+
+            let cleanTitle = ev.title.split(',')[0].trim();
+
+
+            let type = 'Concert';
+            const t = ev.title.toLowerCase();
+
+            if (t.includes('mens basketball') || t.includes('mbb')) {
+                type = 'NCAA MB';
+            } else if (t.includes('womens basketball') || t.includes('wbb')) {
+                type = 'NCAA WB';
+            } else if (t.includes('volleyball')) {
+                type = 'NCAA WVB';
+            }
+
+
+            const timeClean = ev.timeRaw.replace(/^[a-zA-Z]+\s+0?/, '').trim();
+
+
+            const dateParts = ev.dateRaw.replace(',', '').split(' ');
+            const monthMap = { 'January':'01','February':'02','March':'03','April':'04','May':'05','June':'06','July':'07','August':'08','September':'09','October':'10','November':'11','December':'12' };
+            const dateISO = dateParts.length === 3 ? `${dateParts[2]}-${monthMap[dateParts[0]]}-${dateParts[1].padStart(2, '0')}` : ev.dateRaw;
+
+            venueDataME.push({
+                venue: 'Mizzou Arena',
+                title: cleanTitle,
+                date: dateISO,
+                time: timeClean,
+                type: type
+            });
+        }
+        console.log(`Got ${venueData.length} events.`);
+
+        } catch (e) { console.log(`Mizzou Arena Events failed: ${e.message}`); }
+        await page.close();
+        return venueDataME;
+    }
+
 // =======================================================================================
 
 (async () => {
@@ -608,7 +899,10 @@ async function scrapeXfinityE(browser)  {
     const results = await Promise.all([
         scrapeBaylorConcert(browser),
         scrapeXfinityS(browser),
-        scrapeXfinityE(browser)
+        scrapeXfinityE(browser),
+        scrapeMizzouMB(browser),
+        scrapeMizzouWB(browser),
+        scrapeMizzouE(browser)
     ]);
 
     // flatten the array
