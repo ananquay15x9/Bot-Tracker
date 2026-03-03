@@ -22,3 +22,5 @@ crawler-2.js -> calendar-2.csv
 crawler-3.js -> calendar-3.csv
 18. Foster Pavilion
 19. Xfinity Center - Sports - Events
+20. Mizzou Arena
+21. Providence Park

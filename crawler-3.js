@@ -890,6 +890,263 @@ async function scrapeMizzouE(browser) {
         return venueDataME;
     }
 
+// Providence Park Timber MAIN FUNCTIOn
+//date format
+function formatDatePT(dateStr) {
+    if (!dateStr || dateStr === 'TBA') return dateStr;
+
+    // Clean up the string but DO NOT remove slashes anymore
+    dateStr = dateStr.replace(/,\s*$/, '').trim();
+
+    // 1. Handle numeric format (e.g., 3/7, 11/1, 10/24)
+    const numericMatch = dateStr.match(/(\d+)\/(\d+)/);
+    if (numericMatch) {
+        const month = numericMatch[1].padStart(2, '0');
+        const day = numericMatch[2].padStart(2, '0');
+        return `2026-${month}-${day}`;
+    }
+
+    // 2. Handle standard text format (e.g., March 7, 2026)
+    const monthMap = {
+        'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04',
+        'may': '05', 'jun': '06', 'jul': '07', 'aug': '08',
+        'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12'
+    };
+
+    const textMatch = dateStr.match(/([A-Za-z]+)\.?\s+(\d+)(?:\s+(\d{4}))?/);
+    if (textMatch) {
+        const month = monthMap[textMatch[1].toLowerCase().substring(0, 3)];
+        const day = textMatch[2].padStart(2, '0');
+        const year = textMatch[3] || '2026';
+        if (month) return `${year}-${month}-${day}`;
+    }
+
+    return dateStr;
+}
+
+// TIME FORMAT
+function formatTimePT(timeStr) {
+    if (!timeStr || timeStr === 'TBA' || timeStr.length < 3) return 'TBA';
+
+
+    let clean = timeStr.replace(/\s+/g, '').toUpperCase();
+
+
+    if (/^\d+(AM|PM)$/.test(clean)) {
+        clean = clean.replace(/(\d+)/, '$1:00');
+    }
+
+    return clean;
+}
+
+async function scrapeProvidenceT(browser) {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    const venueDataPT = [];
+
+    try {
+        console.log("Navigating to Providence Park...");
+        await page.goto('https://www.timbers.com/schedule/#competition=all&date=2026-02-19', { 
+            waitUntil: 'domcontentloaded',
+            timeout: 60000 
+        });
+
+        await page.waitForSelector('.mls-c-match-tile, [class*="match-tile"]', { timeout: 25000 }).catch(async e => {
+            console.log("Timed out waiting for tiles. Saving screenshot to debug...");
+            await page.screenshot({ path: 'providence_debug.png' });
+            throw e;
+        });
+
+
+        const matches = await page.evaluate(() => {
+            const results = [];
+            const matchAnchors = document.querySelectorAll('a[href*="/matches/"]');
+
+            matchAnchors.forEach(anchor => {
+                const row = anchor.closest('.mls-c-match-list__match');
+                const dateText = row?.querySelector('.mls-c-status-stamp__status')?.innerText.trim() || "";
+                const dateEl = anchor.closest('.mls-c-match-list__match')?.querySelector('.mls-c-status-stamp__status');
+
+                if (dateText.toLowerCase().includes('final')) return;
+
+
+                const infoBlock = anchor.closest('.mls-c-match-list__match')?.querySelector('.mls-c-match-list__match-info');
+                const competition = row?.querySelector('.mls-c-explainer-bar, .mls-c-match-list__match-info p')?.innerText.trim() || "";
+                const venue = row?.querySelector('.sc-iveFHk, .mls-c-match-list__match-info p:last-child')?.innerText.trim() || "";
+
+
+                const home = anchor.querySelector('.--home .mls-c-club__shortname')?.innerText.trim() || "";
+                const away = anchor.querySelector('.--away .mls-c-club__shortname')?.innerText.trim() || "";
+                const time = anchor.querySelector('.mls-c-scorebug span')?.innerText.trim() || "TBA";
+
+
+                if (venue.includes("Providence Park") || venue === "") {
+                    results.push({
+                        title: `${home} vs ${away}`,
+                        date: dateText,
+                        time: time,
+                        competition: competition
+                    });
+                }
+            });
+            return results;
+        });
+
+
+        for (const m of matches) {
+            let type = 'Other';
+            const comp = m.competition.toLowerCase();
+            if (comp.includes('mls')) type = 'MLS';
+            else if (comp.includes('nwsl')) type = 'NWSL';
+            else if (comp.includes('next pro')) type = 'MLS Next Pro';
+
+            venueDataPT.push({
+                venue: 'Providence Park',
+                title: m.title,
+                date: formatDatePT(m.date),
+                time: formatTimePT(m.time),
+                type: type
+            });
+        }
+
+        console.log(`Successfully captured ${venueDataPT.length} home matches.`);
+
+        } catch (e) { console.log(`Providence Park Timbers failed: ${e.message}`); }
+        await page.close();
+        return venueDataPT;
+
+    }
+
+// Providence Park Thorns MAIN FUNCTION
+function formatDateThorns(dateStr) {
+    if (!dateStr || dateStr === 'TBA') return dateStr;
+    dateStr = dateStr.replace(/,\s*$/, '').trim();
+
+    const monthMap = {
+        'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04',
+        'may': '05', 'jun': '06', 'jul': '07', 'aug': '08',
+        'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12'
+    };
+
+    // Surgical match for "Mar 6"
+    const textMatch = dateStr.match(/([A-Za-z]+)\.?\s+(\d+)/);
+    if (textMatch) {
+        const month = monthMap[textMatch[1].toLowerCase().substring(0, 3)];
+        const day = textMatch[2].padStart(2, '0');
+        if (month) return `2026-${month}-${day}`;
+    }
+    return dateStr;
+}
+
+function formatTimeThorns(timeStr) {
+    if (!timeStr || timeStr === 'TBA') return timeStr;
+    let clean = timeStr.replace(/\s+/g, '').toUpperCase();
+    if (/^\d+(AM|PM)$/.test(clean)) {
+        clean = clean.replace(/(\d+)/, '$1:00');
+    }
+    return clean;
+}
+
+async function scrapeProvidenceThorns(browser) {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+
+    const venueDataPThorns = [];
+
+    try {
+        console.log("Navigating to Thorns Schedule...");
+        await page.goto('https://www.thorns.com/schedule', { waitUntil: 'domcontentloaded' });
+
+
+        try {
+            console.log("Trying to bypass cookie modal...");
+
+            await page.waitForSelector('#onetrust-accept-btn-handler', { timeout: 10000 });
+
+            await page.evaluate(() => {
+                const btn = document.querySelector('#onetrust-accept-btn-handler');
+                if (btn) {
+                    btn.click();
+                }
+            });
+            console.log("Cookies accepted.");
+
+            await page.waitForSelector('.onetrust-pc-dark-filter', { state: 'hidden', timeout: 5000 }).catch(() => {});
+        } catch (e) {
+            console.log("Cookie modal not found or already dismissed....");
+        }
+
+
+        console.log("Scrolling to load all events...");
+        await page.evaluate(async () => {
+            await new Promise((resolve) => {
+                let totalHeight = 0;
+                let distance = 100;
+                let timer = setInterval(() => {
+                    let scrollHeight = document.body.scrollHeight;
+                    window.scrollBy(0, distance);
+                    totalHeight += distance;
+                    if (totalHeight >= scrollHeight) {
+                        clearInterval(timer);
+                        resolve();
+                    }
+                }, 100);
+            });
+        });
+        await page.waitForTimeout(2000);
+
+
+        const matches = await page.evaluate(() => {
+            const results = [];
+
+            const rows = document.querySelectorAll('.match-row');
+
+            rows.forEach(row => {
+                const location = row.querySelector('.match-detail-row.location')?.innerText || "";
+
+
+                if (location.toUpperCase().includes("PORTLAND, OR")) {
+                    const title = row.querySelector('.div-block-5')?.innerText.replace(/\s+/g, ' ').trim() || "";
+
+                    const dateTimeStr = row.querySelector('.match-detail-row.date')?.innerText || "";
+                    const parts = dateTimeStr.split('|');
+
+                    const dateRaw = parts[0] ? parts[0].trim() : "";
+                    const timeRaw = parts[1] ? parts[1].trim() : "TBA";
+
+                    results.push({
+                        title: title,
+                        date: dateRaw,
+                        time: timeRaw
+                    });
+                }
+            });
+            return results;
+        });
+
+        for (const m of matches) {
+
+            let cleanTitle = m.title.split('Opening Night')[0].trim();
+            cleanTitle = cleanTitle.split('presented by')[0].trim();
+
+            venueDataPThorns.push({
+                venue: 'Providence Park',
+                title: cleanTitle,
+                date: formatDateThorns(m.date),
+                time: formatTimeThorns(m.time),
+                type: 'NWSL'
+            });
+        }
+
+        } catch (e) { console.log(`Providence Park Thorns failed: ${e.message}`); 
+    }   finally {
+        await page.close();
+        await context.close();
+    }
+    return venueDataPThorns;
+
+    }
+
 // =======================================================================================
 
 (async () => {
@@ -902,7 +1159,9 @@ async function scrapeMizzouE(browser) {
         scrapeXfinityE(browser),
         scrapeMizzouMB(browser),
         scrapeMizzouWB(browser),
-        scrapeMizzouE(browser)
+        scrapeMizzouE(browser),
+        scrapeProvidenceT(browser),
+        scrapeProvidenceThorns(browser)
     ]);
 
     // flatten the array
