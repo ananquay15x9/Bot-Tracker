@@ -255,6 +255,54 @@ async function setupTranscendKiller(page) {
     });
 }
 
+//DOM KILL FOR XFINITY CENTER SPORT
+async function setupTranscendKillerXS(page) {
+    await page.addStyleTag({
+        content: `
+            #transcend-consent-manager,
+            .satisfi_btn,
+            .satisfi_container,
+            #satisfi_chat_container,
+            .satisfi_close {
+                display: none !important;
+                visibility: hidden !important;
+                opacity: 0 !important;
+                pointer-events: none !important;
+            }
+        `
+    });
+
+    await page.addInitScript(() => {
+        const kill = () => {
+            const transcend = document.querySelector('#transcend-consent-manager');
+            if (transcend) transcend.remove();
+
+            const satisfiElements = document.querySelectorAll('.satisfi_btn, .satisfi_container, #satisfi_chat_container');
+            satisfiElements.forEach(el => el.remove());
+
+            document.documentElement.style.setProperty('overflow', 'auto', 'important');
+            document.body.style.setProperty('overflow', 'auto', 'important');
+            document.body.style.setProperty('position', 'static', 'important');
+        };
+
+        kill();
+        const obs = new MutationObserver(() => kill());
+        obs.observe(document.documentElement, { childList: true, subtree: true });
+    });
+
+    await page.route('**/*', (route) => {
+        const u = route.request().url();
+        if (
+            u.includes('transcend-cdn.com') ||
+            u.includes('transcend.io') ||
+            u.includes('satisfi')
+        ) {
+            return route.abort();
+        }
+        return route.continue();
+    });
+}
+
 //========================================
 // SORTING TYPE FUNCTION
 //Baylor Concert Function Time
@@ -332,6 +380,224 @@ async function scrapeBaylorConcert(browser)  {
         return venueData;
     }
 
+// Xfinity Center - Sports
+async function scrapeXfinityS(browser)  {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await setupTranscendKillerXS(page);
+
+    let venueData = [];
+    const today = new Date();
+    const currentYear = today.getFullYear();
+
+        try {
+            console.log("Navigating to Maryland Xfinity Calendar...");
+            await page.goto('https://umterps.com/calendar', { waitUntil: 'domcontentloaded' });
+
+            const monthHeader = page.locator('[data-bind*="formatDate: selectedDate"]').first();
+            await monthHeader.waitFor({ timeout: 15000 });
+
+            for (let m = 0; m < 12; m++) {
+                await page.waitForSelector('.sidearm-calendar-table-cell', { timeout: 10000 });
+                let monthText = await monthHeader.innerText();
+                const [monthName, yearName] = monthText.split(' ');
+                if (parseInt(yearName) > currentYear) break;
+
+                console.log(`Processing: ${monthText}`);
+
+                await page.evaluate(() => {
+                    const buttons = document.querySelectorAll('.sidearm-calendar-table-cell-toggle-button');
+                    buttons.forEach(btn => {
+                        const container = btn.closest('.sidearm-calendar-table-cell-container');
+                        if (container && !container.classList.contains('sidearm-calendar-table-cell-container-open')) {
+                            btn.click();
+                        }
+                    });
+                });
+                await page.waitForTimeout(1500);
+
+                const monthEvents = await page.evaluate(({ monthName, yearName }) => {
+                    const results = [];
+                    const monthMap = { 'January':1,'February':2,'March':3,'April':4,'May':5,'June':6,'July':7,'August':8,'September':9,'October':10,'November':11,'December':12 };
+                    const cells = document.querySelectorAll('.sidearm-calendar-table-cell');
+                    const dateMap = new Map();
+
+                    cells.forEach((cell, index) => {
+                        const timeTag = cell.querySelector('time[data-bind*="formatDate: date"]');
+                        dateMap.set(index, timeTag ? timeTag.innerText.trim() : "");
+                    });
+
+                    //  expand the grid
+                    document.querySelectorAll('.sidearm-calendar-table-cell-toggle-button').forEach(btn => {
+                        const container = btn.closest('.sidearm-calendar-table-cell-container');
+                        if (container && !container.classList.contains('sidearm-calendar-table-cell-container-open')) {
+                            btn.click();
+                        }
+                    });
+
+                    cells.forEach((cell, index) => {
+                        const dayNum = dateMap.get(index);
+                        if (!dayNum) return;
+
+                        const dateISO = `${yearName}-${String(monthMap[monthName]).padStart(2, '0')}-${dayNum.padStart(2, '0')}`;
+                        const events = cell.querySelectorAll('li.sidearm-calendar-table-cell-event');
+
+                        events.forEach(event => {
+                            const locText = event.querySelector('[data-bind*="location"]')?.innerText.trim() || "";
+
+                            if (locText === "College Park, MD") {
+                                const sportCode = event.querySelector('span[data-bind*="sport.short_display"]')?.innerText.trim() || "";
+                                const title = event.querySelector('p')?.innerText.trim() || "";
+
+
+                                let time = event.querySelector('span[data-bind*="time"]')?.innerText.trim() || "";
+                                if (!time) {
+                                    const link = event.querySelector('a[aria-label*="at "]');
+                                    if (link) {
+                                        const aria = link.getAttribute('aria-label');
+                                        const match = aria.match(/at\s+([^ ]+\s+[^ ]+)/);
+                                        time = match ? match[1].trim() : "TBA";
+                                    }
+                                }
+
+                                results.push({
+                                    title,
+                                    sportCode,
+                                    time: time || "TBA",
+                                    dateISO
+                                });
+                            }
+                        });
+                    });
+                    return results;
+                }, { monthName, yearName });
+
+
+                for (const ev of monthEvents) {
+                    console.log(`Pulling Event: ${JSON.stringify(ev)}`);
+
+                    if (new Date(ev.dateISO) < new Date().setHours(0,0,0,0)) continue;
+
+                    let type = 'Other';
+
+                    const searchStr = (ev.title + " " + (ev.sportCode || "")).toUpperCase();
+
+                    if (searchStr.includes('MBB') || searchStr.includes("MEN'S BASKETBALL")) {
+                        type = 'NCAA MB';
+                    }
+                    else if (searchStr.includes('WBB') || searchStr.includes("WOMEN'S BASKETBALL")) {
+                        type = 'NCAA WB';
+                    }
+
+                    else if (searchStr.includes('VOLLEYBALL') || searchStr.includes('WVB')) {
+                        type = 'NCAA WVB';
+                    }
+
+                    else if (searchStr.includes('CONCERT') || searchStr.includes('TOUR') || searchStr.includes('SHOW')) {
+                        type = 'Concert';
+                    }
+
+                    // all other sports fall into 'other'
+
+                    venueData.push({
+                        venue: 'Xfinity Center',
+                        title: ev.title,
+                        date: ev.dateISO,
+                        time: formatTime(ev.time),
+                        type: type
+                    });
+                }
+
+                const nextBtn = page.locator('.slick-next').first();
+                await nextBtn.click();
+                await page.waitForFunction(
+                    (old) => document.querySelector('[data-bind*="formatDate: selectedDate"]').innerText !== old,
+                    monthText,
+                    { timeout: 8000 }
+                ).catch(() => { m = 13; });
+            }
+
+        } catch (e) { console.log("Xfinity Center Sports failed: ", e); }
+        await page.close();
+        await context.close();
+        return venueData;
+    }
+
+
+// Xfinity Center - Sports
+async function scrapeXfinityE(browser)  {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+
+    let venueData = [];
+
+    try {
+        console.log("Navigating to Ticketmaster...");
+
+        await page.goto('https://www.ticketmaster.com/xfinity-center-tickets-college-park/venue/172349', {
+            waitUntil: 'domcontentloaded'
+        });
+
+        await page.waitForSelector('.gCZRzf', { timeout: 15000 });
+
+        const events = await page.evaluate(() => {
+            const results = [];
+            const items = document.querySelectorAll('.gCZRzf');
+
+            items.forEach(item => {
+
+                const hiddenSpans = Array.from(item.querySelectorAll('.VisuallyHidden-sc-8buqks-0 span'));
+
+                const dateRaw = hiddenSpans[0]?.innerText || "";
+                const timeRaw = hiddenSpans[1]?.innerText || "";
+                const title = hiddenSpans[2]?.innerText || item.querySelector('.gRLkJL')?.innerText || "";
+
+                results.push({ dateRaw, timeRaw, title });
+            });
+            return results;
+        });
+
+        for (const ev of events) {
+            if (!ev.title) continue;
+
+            let cleanTitle = ev.title.split(',')[0].trim();
+
+
+            let type = 'Concert';
+            const t = ev.title.toLowerCase();
+
+            if (t.includes('mens basketball') || t.includes('mbb')) {
+                type = 'NCAA MB';
+            } else if (t.includes('womens basketball') || t.includes('wbb')) {
+                type = 'NCAA WB';
+            } else if (t.includes('volleyball')) {
+                type = 'NCAA WVB';
+            }
+
+
+            const timeClean = ev.timeRaw.replace(/^[a-zA-Z]+\s+0?/, '').trim();
+
+
+            const dateParts = ev.dateRaw.replace(',', '').split(' ');
+            const monthMap = { 'January':'01','February':'02','March':'03','April':'04','May':'05','June':'06','July':'07','August':'08','September':'09','October':'10','November':'11','December':'12' };
+            const dateISO = dateParts.length === 3 ? `${dateParts[2]}-${monthMap[dateParts[0]]}-${dateParts[1].padStart(2, '0')}` : ev.dateRaw;
+
+            venueData.push({
+                venue: 'Xfinity Center',
+                title: cleanTitle,
+                date: dateISO,
+                time: timeClean,
+                type: type
+            });
+        }
+
+        console.log(`Got ${venueData.length} events.`);
+
+        } catch (e) { console.log("Xfinity Center Events failed: ", e); }
+        await page.close();
+        await context.close();
+        return venueData;
+    }
 
 // =======================================================================================
 
@@ -340,7 +606,9 @@ async function scrapeBaylorConcert(browser)  {
 
     //run them one by one to keep memory clean
     const results = await Promise.all([
-        scrapeBaylorConcert(browser)
+        scrapeBaylorConcert(browser),
+        scrapeXfinityS(browser),
+        scrapeXfinityE(browser)
     ]);
 
     // flatten the array
