@@ -1147,6 +1147,458 @@ async function scrapeProvidenceThorns(browser) {
 
     }
 
+// SHELL ENERGY STADIUM MAIN FUNCTION
+function formatDateSD(dateStr) {
+    if (!dateStr || dateStr === 'TBA') return dateStr;
+    const monthMap = {
+        'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04',
+        'may': '05', 'jun': '06', 'jul': '07', 'aug': '08',
+        'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12'
+    };
+    const match = dateStr.match(/([A-Za-z]+)\.?\s+(\d+)/i);
+    if (match) {
+        const month = monthMap[match[1].toLowerCase().substring(0, 3)];
+        const day = match[2].padStart(2, '0');
+        return `2026-${month}-${day}`;
+    }
+    return dateStr;
+}
+
+function formatTimeSD(timeStr) {
+    if (!timeStr || timeStr === 'TBA') return timeStr;
+    let clean = timeStr.replace(/\s+/g, '').toUpperCase();
+    if (/^\d+(AM|PM)$/.test(clean)) {
+        clean = clean.replace(/(\d+)/, '$1:00');
+    }
+    return clean;
+}
+
+async function scrapeShellDynamo(browser)  {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+
+    const venueData = [];
+
+    try {
+        console.log("Navigating to Shell Energy Stadium Events...");
+        await page.goto('https://www.houstondynamofc.com/shell-energy-stadium/events', { waitUntil: 'domcontentloaded' });
+
+
+        try {
+            await page.waitForSelector('#onetrust-accept-btn-handler', { timeout: 10000 });
+            await page.evaluate(() => document.querySelector('#onetrust-accept-btn-handler')?.click());
+            console.log("Cookies accepted.");
+            await page.waitForTimeout(1000);
+        } catch (e) { console.log("Cookie modal not found."); }
+
+
+        const events = await page.evaluate(() => {
+            const results = [];
+            const cards = document.querySelectorAll('.fa-text');
+
+            cards.forEach(card => {
+                const title = card.querySelector('.fa-text__title')?.innerText.trim() || "";
+                const bodyText = card.querySelector('.fa-text__body p')?.innerText || "";
+
+                const dateMatch = bodyText.match(/(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d+/i);
+                const timeMatch = bodyText.match(/(\d{1,2}:\d{2}\s*(?:p\.m\.|a\.m\.|pm|am))/i);
+
+                if (dateMatch && title) {
+                    results.push({
+                        title: title,
+                        rawDate: dateMatch[0],
+                        rawTime: timeMatch ? timeMatch[0] : "TBA"
+                    });
+                }
+            });
+            return results;
+        });
+
+
+        for (const ev of events) {
+            let type = 'Other';
+            if (ev.title.toLowerCase().includes('dash')) type = 'NWSL';
+            else if (ev.title.toLowerCase().includes('dynamo')) type = 'MLS';
+            else if (ev.title.toLowerCase().includes('concert')) type = 'Concert';
+
+            venueData.push({
+                venue: 'Shell Energy Stadium',
+                title: ev.title,
+                date: formatDateSD(ev.rawDate),
+                time: formatTimeSD(ev.rawTime.replace(/\./g, '')), // Remove periods from p.m.
+                type: type
+            });
+        }
+
+        console.log(`Success! Pulling ${venueData.length} events.`);
+
+        } catch (e) { console.log("Shell Energy Stadium Dynamo failed: ", e); }
+        await page.close();
+        await context.close();
+        return venueData;
+    }
+
+// SHELL ENERGY DASH MAIN FUNCTION
+function formatDateDash(dateStr) {
+    if (!dateStr || dateStr === 'TBA') return dateStr;
+
+
+    const cleanDate = dateStr.split(',').slice(1).join(',').trim().split('\n')[0].trim();
+
+    const monthMap = {
+        'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04',
+        'may': '05', 'jun': '06', 'jul': '07', 'aug': '08',
+        'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12'
+    };
+
+    const match = cleanDate.match(/([A-Za-z]+)\s+(\d+)/i);
+    if (match) {
+        const month = monthMap[match[1].toLowerCase().substring(0, 3)];
+        const day = match[2].padStart(2, '0');
+        return `2026-${month}-${day}`;
+    }
+    return dateStr;
+}
+
+function formatTimeDash(timeStr) {
+    if (!timeStr || timeStr === 'TBA') return timeStr;
+
+    let clean = timeStr.replace(/CT/i, '').replace(/\./g, '').replace(/\s+/g, '').toUpperCase();
+
+    if (/^\d+(AM|PM)$/.test(clean)) {
+        clean = clean.replace(/(\d+)/, '$1:00');
+    }
+    return clean;
+}
+
+async function scrapeShellDash(browser)  {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+
+    const venueData = [];
+
+    try {
+        console.log("Navigating to Dash Schedule...");
+        await page.goto('https://www.houstondynamofc.com/houstondash/schedule/', { waitUntil: 'domcontentloaded' });
+
+
+        try {
+            await page.waitForSelector('#onetrust-accept-btn-handler', { timeout: 10000 });
+            await page.evaluate(() => document.querySelector('#onetrust-accept-btn-handler')?.click());
+            console.log("Cookies accepted.");
+        } catch (e) { console.log("Cookie modal not found."); }
+
+        const rows = await page.evaluate(() => {
+            const results = [];
+            const trs = Array.from(document.querySelectorAll('tbody tr'));
+
+            trs.slice(1).forEach(row => {
+                const cells = row.querySelectorAll('td');
+                if (cells.length < 7) return;
+
+                const dateRaw = cells[0].innerText.trim();
+                const opponentRaw = cells[1].innerText.trim();
+                const stadium = cells[2].innerText.trim();
+                const kickoff = cells[6].innerText.trim();
+
+
+                if (stadium.includes("Shell Energy Stadium")) {
+                    results.push({
+                        title: opponentRaw,
+                        date: dateRaw,
+                        time: kickoff
+                    });
+                }
+            });
+            return results;
+        });
+
+        for (const r of rows) {
+            let type = 'Other';
+            const t = r.title.toLowerCase();
+
+            if (t.includes('dash')) type = 'NWSL';
+            else if (t.includes('dynamo')) type = 'MLS';
+            else if (t.includes('concert') || t.includes('tour')) type = 'Concert';
+
+            venueData.push({
+                venue: 'Shell Energy Stadium',
+                title: r.title.replace(/\s+/g, ' ').trim(),
+                date: formatDateDash(r.date),
+                time: formatTimeDash(r.time),
+                type: type
+            });
+        }
+
+        console.log(`Success! Pulling ${venueData.length} home games.`);
+
+        } catch (e) { console.log("Shell Energy Stadium Dash failed: ", e); }
+    await page.close();
+    await context.close();
+    return venueData;
+}
+
+// SUBARU UNION MAIN FUNCTION
+function formatDateSU(dateStr) {
+    if (!dateStr || dateStr === 'TBA') return dateStr;
+    dateStr = dateStr.replace(/,\s*$/, '').trim();
+
+
+    const numericMatch = dateStr.match(/(\d+)\/(\d+)/);
+    if (numericMatch) {
+        const month = numericMatch[1].padStart(2, '0');
+        const day = numericMatch[2].padStart(2, '0');
+        return `2026-${month}-${day}`;
+    }
+    return dateStr;
+}
+
+function formatTimeSU(timeStr) {
+    if (!timeStr || timeStr === 'TBA' || timeStr.length < 3) return 'TBA';
+    let clean = timeStr.replace(/\s+/g, '').toUpperCase();
+    if (/^\d+(AM|PM)$/.test(clean)) {
+        clean = clean.replace(/(\d+)/, '$1:00');
+    }
+    return clean;
+}
+
+async function scrapeSubaruUnion(browser)  {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+
+    const venueData = [];
+
+    try {
+        console.log("Navigating to Subaru Park Schedule...");
+        await page.goto('https://www.philadelphiaunion.com/schedule/#competition=all&date=2026-02-10', { 
+            waitUntil: 'domcontentloaded' 
+        });
+
+
+        try {
+            const closePopup = page.locator('#closeIconContainer, [data-testid="closeIcon"]');
+            await closePopup.waitFor({ timeout: 5000 });
+            await closePopup.click();
+            console.log("Marketing popup dismissed.");
+        } catch (e) { console.log("No marketing popup appeared."); }
+
+
+        try {
+            const cookieBtn = page.locator('#onetrust-accept-btn-handler');
+            await cookieBtn.waitFor({ timeout: 5000 });
+            await cookieBtn.click();
+            console.log("Cookies accepted.");
+        } catch (e) { console.log("No cookie modal found."); }
+
+
+        await page.waitForSelector('.mls-c-match-tile', { timeout: 15000 });
+
+        const matches = await page.evaluate(() => {
+            const results = [];
+            const matchAnchors = document.querySelectorAll('a[href*="/matches/"]');
+
+            matchAnchors.forEach(anchor => {
+                const row = anchor.closest('.mls-c-match-list__match');
+                const statusText = row?.querySelector('.mls-c-status-stamp__status')?.innerText.trim() || "";
+
+
+                if (statusText.toLowerCase().includes('final')) return;
+
+                const competition = row?.querySelector('.mls-c-explainer-bar, .mls-c-match-list__match-info p')?.innerText.trim() || "";
+                const venue = row?.querySelector('.sc-iveFHk, .mls-c-match-list__match-info p:last-child')?.innerText.trim() || "";
+
+                const home = anchor.querySelector('.--home .mls-c-club__shortname')?.innerText.trim() || "";
+                const away = anchor.querySelector('.--away .mls-c-club__shortname')?.innerText.trim() || "";
+                const time = anchor.querySelector('.mls-c-scorebug span')?.innerText.trim() || "TBA";
+
+                if (venue.includes("Subaru Park")) {
+                    results.push({
+                        title: `${home} vs ${away}`,
+                        date: statusText,
+                        time: time,
+                        competition: competition
+                    });
+                }
+            });
+            return results;
+        });
+
+        for (const m of matches) {
+            let type = 'Other';
+            const comp = m.competition.toLowerCase();
+            
+            if (comp.includes('mls regular season')) type = 'MLS';
+            else if (comp.includes('next pro')) type = 'MLS Next Pro';
+            else if (comp.includes('concert')) type = 'Concert';
+
+            venueData.push({
+                venue: 'Subaru Park',
+                title: m.title,
+                date: formatDateSU(m.date),
+                time: formatTimeSU(m.time),
+                type: type
+            });
+        }
+
+        console.log(`Success! Pulling ${venueData.length} home matches.`);
+
+        } catch (e) { console.log("Subaru Park Union failed: ", e); }
+    await page.close();
+    await context.close();
+    return venueData;
+}
+
+// SUBARU PPL MAIN FUNCTION
+function formatDatePPL(dateStr) {
+    if (!dateStr || dateStr === 'TBA') return dateStr;
+    const monthMap = {
+        'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04',
+        'may': '05', 'jun': '06', 'jul': '07', 'aug': '08',
+        'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12'
+    };
+    const match = dateStr.match(/([A-Za-z]{3}),?\s+([A-Za-z]{3})\s+(\d+)/i);
+    if (match) {
+        const month = monthMap[match[2].toLowerCase()];
+        const day = match[3].padStart(2, '0');
+        return `2026-${month}-${day}`;
+    }
+    return dateStr;
+}
+
+function formatTimePPL(timeStr) {
+    if (!timeStr || timeStr === 'TBA') return 'TBA';
+    let clean = timeStr.replace(/\s+/g, '').toUpperCase();
+    if (/^\d+(AM|PM)$/.test(clean)) {
+        clean = clean.replace(/(\d+)/, '$1:00');
+    }
+    return clean;
+}
+
+async function scrapeSubaruPPL(browser)  {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+
+    const venueData = [];
+
+    try {
+        console.log("Navigating to Subaru Park PLL Schedule...");
+        // Switch to domcontentloaded to bypass heavy background trackers
+        await page.goto('https://premierlacrosseleague.com/schedule', { 
+            waitUntil: 'domcontentloaded', 
+            timeout: 60000 
+        });
+
+
+
+        console.log("Locating Philadelphia slide...");
+
+        await page.waitForSelector('.mainText:has-text("Philadelphia, PA")', { timeout: 20000 });
+        
+        //brute force to find Philadelphia schedule
+        await page.evaluate(async () => {
+            const wrapper = document.querySelector('.swiper-wrapper');
+            let found = false;
+
+            for (let i = 0; i < 30; i++) {
+                const slides = Array.from(document.querySelectorAll('.swiper-slide'));
+                const philly = slides.find(s => s.innerText.includes("Philadelphia, PA"));
+
+                if (philly) {
+                    philly.scrollIntoView();
+                    philly.click();
+                    philly.querySelector('.mainText')?.click();
+                    found = true;
+                    break;
+                }
+
+                if (wrapper) {
+                    wrapper.parentElement?.swiper?.slideNext();
+                    wrapper.scrollBy(0, 150);
+                }
+                await new Promise(r => setTimeout(r, 500));
+            }
+        });
+
+        console.log("Waiting for 'Chester, PA' header...");
+        try {
+            await page.waitForSelector('h2:has-text("Chester, PA")', { timeout: 15000 });
+            console.log("Success! Philadelphia schedule active.");
+
+            console.log("Scrolling...");
+            await page.evaluate(async () => {
+                const distance = 100;
+                const delay = 100;
+                while (document.documentElement.scrollTop + window.innerHeight < document.documentElement.scrollHeight) {
+                    window.scrollBy(0, distance);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+
+                window.scrollTo(0, 0);
+                await new Promise(resolve => setTimeout(resolve, 500));
+            });
+            await page.waitForTimeout(1000);
+        } catch (e) {
+            console.log("Header not found, attempting extraction anyway...");
+        }
+
+
+        const matches = await page.evaluate(() => {
+            const results = [];
+
+            const container = document.querySelector('.css-1vszetx');
+            if (!container) return results;
+
+            const blocks = container.querySelectorAll('.css-1vmcr68');
+            blocks.forEach(block => {
+                const dateHeader = block.querySelector('h3.css-12otnha')?.innerText.trim() || "";
+                
+                const rows = block.querySelectorAll('.css-1r57kue, .css-s4g23d');
+                rows.forEach(row => {
+                    const time = row.querySelector('.gameTimeCol p')?.innerText.trim() || "TBA";
+                    const league = row.querySelector('.leagueCol img')?.getAttribute('alt') || "";
+                    
+                    const team1 = row.querySelector('.css-oe234f')?.innerText.trim();
+                    const team2 = row.querySelector('.css-kw84f0')?.innerText.trim();
+                    const special = row.querySelector('.css-i8wd9l')?.innerText.trim();
+
+                    if (team1 && team2) {
+                        results.push({
+                            title: `${team1} vs ${team2}`,
+                            date: dateHeader,
+                            time: time,
+                            league: league
+                        });
+                    } else if (special) {
+                        results.push({
+                            title: special,
+                            date: dateHeader,
+                            time: time,
+                            league: league
+                        });
+                    }
+                });
+            });
+            return results;
+        });
+
+
+        for (const m of matches) {
+            venueData.push({
+                venue: 'Subaru Park',
+                title: m.title,
+                date: formatDatePPL(m.date),
+                time: formatTimePPL(m.time),
+                type: m.league.includes('WLL') ? 'WLL' : 'PLL'
+            });
+        }
+        console.log(`Pulled ${venueData.length} matches.`);
+
+        } catch (e) { console.log("Subaru Park PPL failed: ", e); }
+    await page.close();
+    await context.close();
+    return venueData;
+}
+
 // =======================================================================================
 
 (async () => {
@@ -1161,7 +1613,11 @@ async function scrapeProvidenceThorns(browser) {
         scrapeMizzouWB(browser),
         scrapeMizzouE(browser),
         scrapeProvidenceT(browser),
-        scrapeProvidenceThorns(browser)
+        scrapeProvidenceThorns(browser),
+        scrapeShellDynamo(browser),
+        scrapeShellDash(browser),
+        scrapeSubaruUnion(browser),
+        scrapeSubaruPPL(browser)
     ]);
 
     // flatten the array
