@@ -8,6 +8,16 @@ Follow these steps to set up the bot on your local machine.
 
 ### 1. Prerequisites
 Ensure you have [Node.js](https://nodejs.org/) installed.
+For servers:
+* **xvfb** (Virtual Frame Buffer) to run the browser without a physical monitor
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install xvfb
+# Fedora
+sudo dnf install xorg-x11-server-Xvfb
+```
+
 
 ### 2. Installation
 Clone the repository and install the required modules:
@@ -28,6 +38,9 @@ npx playwright install chromium
 
 # Install the CSV convert tool
 npm install csv-writer
+
+# Optional: Linux server
+npx playwright install-deps 
 
 ```
 
@@ -109,7 +122,18 @@ Venues:
 
     Subaru Park
 
-### 4. CSV Structure
+
+### 4. Server Deployment
+---
+| Command |  Action | Output
+|:-----|:--------:||:---------:|
+| npm run c1   | Run Crawler 1 | calendar-1.csv
+| npm run c2   | Run Crawler 2| calendar-2.csv
+| npm run c3  | Run Crawler 3| calendar-3.csv
+| npm run all | Run all crawlers sequentially | All CSVs
+---
+
+### 5. CSV Structure
 All exported files follow this standardized format for easy importing into calendar apps or databases:
 
 VENUE: Name of the facility

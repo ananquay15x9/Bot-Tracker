@@ -1,8 +1,15 @@
 {
-  "name": "bot-tracker",
+  "name": "calendar-bot-tracker",
   "version": "1.0.0",
   "description": "Sports event scraper for calendar updates",
-  "main": "scraper.js",
+  "main": "crawler-1.js",
+  "scripts": {
+    "start": "node crawler-1.js && node crawler-2.js && node crawler-3.js",
+    "c1": "xvfb-run --auto-servernum --server-args='-screen 0 1280x720x24' node crawler-1.js",
+    "c2": "xvfb-run --auto-servernum --server-args='-screen 0 1280x720x24' node crawler-2.js",
+    "c3": "xvfb-run --auto-servernum --server-args='-screen 0 1280x720x24' node crawler-3.js",
+    "all": "npm run c1; npm run c2; npm run c3"
+  },
   "dependencies": {
     "csv-writer": "^1.6.0",
     "playwright": "^1.58.2"
