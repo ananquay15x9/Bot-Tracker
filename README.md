@@ -124,7 +124,6 @@ Venues:
 
 
 ### 4. Server Deployment
----
 | Command |  Action | Output
 |:-----|:--------:||:---------:|
 | npm run c1   | Run Crawler 1 | calendar-1.csv
