@@ -1599,6 +1599,90 @@ async function scrapeSubaruPPL(browser)  {
     return venueData;
 }
 
+// DICKS SPORTING GOODS MAIN FUNCTION
+// DICKS SPORTING GOODS MAIN FUNCTION
+function categorizeDSG(title) {
+    const text = title.toLowerCase();
+    if (text.includes('rapids') && !text.includes(' 2')) return 'MLS';
+    if (text.includes('rapids 2') || text.includes('mls next pro')) return 'MLS Next Pro';
+    if (text.includes('national team') || text.includes('nwsl') || text.includes('women')) return 'NWSL';
+    if (text.includes('concert') || text.includes('tour') || text.includes('phish')) return 'Concert';
+    return 'Other';
+}
+
+async function scrapeDSG(browser) {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    let venueData = [];
+
+    console.log("🚀 Navigating to DSG Park Azure Portal...");
+    
+    try {
+        await page.goto('https://dsgpark.azurewebsites.net/misc/upcoming-events', { 
+            waitUntil: 'domcontentloaded', 
+            timeout: 60000 
+        });
+
+        const closeBtn = page.locator('button:has(svg path[d*="M10.1583"])').first();
+        try {
+            await closeBtn.waitFor({ state: 'visible', timeout: 5000 });
+            await closeBtn.click();
+        } catch (e) {
+            console.log("No DSG popup detected.");
+        }
+
+        await page.evaluate(async () => {
+            const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+            let lastHeight = document.body.scrollHeight;
+            document.body.style.overflow = 'auto';
+            for (let i = 0; i < 10; i++) {
+                window.scrollTo(0, document.body.scrollHeight);
+                await delay(1500); 
+                let newHeight = document.body.scrollHeight;
+                if (newHeight === lastHeight) break;
+                lastHeight = newHeight;
+            }
+        });
+
+        const rawEvents = await page.evaluate(() => {
+            const events = [];
+            const products = document.querySelectorAll('.product');
+            products.forEach(item => {
+                const titleLink = item.querySelector('h3 a.text-dark');
+                const dateSpan = item.querySelector('span.text-gray-500.text-sm');
+                if (titleLink && dateSpan) {
+                    const fullText = dateSpan.innerText;
+                    if (fullText.includes('•')) {
+                        const parts = fullText.split('•').map(p => p.trim());
+                        events.push({
+                            title: titleLink.innerText.trim(),
+                            rawDate: parts[1],
+                            rawTime: parts[2]
+                        });
+                    }
+                }
+            });
+            return events;
+        });
+
+        venueData = rawEvents.map(ev => ({
+            venue: "Dick's Sporting Goods Park",
+            title: ev.title.toUpperCase(),
+            date: formatDate(ev.rawDate),
+            time: formatTime(ev.rawTime),
+            type: categorizeDSG(ev.title)
+        }));
+
+        console.log(`Success! DSG Park pulled ${venueData.length} events.`);
+
+    } catch (err) {
+        console.error("❌ DSG Error:", err.message);
+    } finally {
+        await page.close();
+        await context.close();
+    }
+    return venueData;
+}
 // =======================================================================================
 
 (async () => {
@@ -1617,7 +1701,8 @@ async function scrapeSubaruPPL(browser)  {
         scrapeShellDynamo(browser),
         scrapeShellDash(browser),
         scrapeSubaruUnion(browser),
-        scrapeSubaruPPL(browser)
+        scrapeSubaruPPL(browser),
+        scrapeDSG(browser)
     ]);
 
     // flatten the array
