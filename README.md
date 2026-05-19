@@ -119,7 +119,7 @@ Venues:
     Shell Energy Stadium
 
     Subaru Park
-    
+
 ```bash
 #CRAWLER 4
 # Command
@@ -141,6 +141,7 @@ Venues:
 | npm run c1   | Run Crawler 1 | calendar-1.csv
 | npm run c2   | Run Crawler 2| calendar-2.csv
 | npm run c3  | Run Crawler 3| calendar-3.csv
+| npm run c4  | Run Crawler 4| calendar-4.csv
 | npm run all | Run all crawlers sequentially | All CSVs
 ---
 
