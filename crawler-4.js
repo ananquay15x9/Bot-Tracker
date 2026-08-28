@@ -1,4 +1,6 @@
-const { chromium } = require('playwright');
+const { chromium } = require('playwright-extra');
+const stealth = require('puppeteer-extra-plugin-stealth')();
+chromium.use(stealth);
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 
 // Convert date to yyyy-mm-dd format
@@ -648,7 +650,7 @@ async function scrapeEnmarket(browser) {
             }
         }
 
-    } catch (e) { 
+    } catch (e) {
         console.log("❌ Enmarket Arena failed: ", e.message); 
     } finally {
         await page.close();
@@ -817,7 +819,144 @@ async function scrapeAllianzField(browser) {
     return venueData;
 }
 
-// hiện tại crawler đang bị lỗi, cần phải fix tại vì bị timeout mất rồi
+// LSU PMAC main function
+// ISO Helpers for Localist calendar (LSU)
+function parseIsoDate(isoStr) {
+    if (!isoStr) return 'TBA';
+    return isoStr.split('T')[0];
+}
+
+function parseIsoTime(isoStr) {
+    if (!isoStr || !isoStr.includes('T')) return 'TBA';
+
+    const timePart = isoStr.split('T')[1].substring(0, 5);
+    let [hours, minutes] = timePart.split(':').map(Number);
+
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    hours = hours % 12;
+    hours = hours ? hours : 12;
+
+    return `${hours}:${String(minutes).padStart(2, '0')}${ampm}`;
+}
+
+// Categorize LSU Events
+function categorizeLSUEvent(title) {
+    const titleLower = (title || "").toLowerCase();
+
+    if (titleLower.includes('gymnastics')) {
+        return 'Gymnastics';
+    }
+    if (titleLower.includes('basketball') || titleLower.includes('mbb') || titleLower.includes('wbb')) {
+        return (titleLower.includes('women') || titleLower.includes('wbb')) ? 'NCAA WB' : 'NCAA MB';
+    }
+    if (titleLower.includes('volleyball') || titleLower.includes('wvb')) {
+        return 'NCAA WVB';
+    }
+    if (titleLower.includes('concert') || titleLower.includes('tour') || titleLower.includes('live')) {
+        return 'Concert';
+    }
+
+    return 'Other';
+}
+
+async function scrapeLSU(browser) {
+    const context = await browser.newContext({
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+        viewport: { width: 1366, height: 768 }
+    });
+    const page = await context.newPage();
+    await setupTranscendKiller(page);
+
+    let venueData = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const seenEvents = new Set();
+
+    try {
+        console.log(`\n🚀 Scraping LSU Pete Maravich Assembly Center (PMAC)...`);
+        await page.goto('https://calendar.lsu.edu/pete_maravich_assembly_center_316', { 
+            waitUntil: 'domcontentloaded', 
+            timeout: 30000 
+        });
+
+        await page.waitForSelector('.em-card', { timeout: 15000 }).catch(() => {
+            console.log("No initial event cards found on direct view.");
+        });
+
+        // Expand pagination if available
+        try {
+            const loadMoreBtn = page.locator('a.em-load_more, button.em-load_more, [data-action="load_more"]').first();
+            while (await loadMoreBtn.isVisible({ timeout: 2000 })) {
+                console.log("🖱️ Expanding LSU calendar listings...");
+                await loadMoreBtn.click();
+                await page.waitForTimeout(1500);
+            }
+        } catch (e) {}
+
+        const rawEvents = await page.evaluate(() => {
+            const results = [];
+            const cards = document.querySelectorAll('.em-card');
+
+            cards.forEach(card => {
+                const titleEl = card.querySelector('.em-card_title a, .em-card_title');
+                const title = titleEl ? titleEl.innerText.trim() : "";
+
+                const timeEl = card.querySelector('em-local-time');
+                let startIso = timeEl ? timeEl.getAttribute('start') : "";
+
+                if (!startIso) {
+                    const eventTextEl = card.querySelector('.em-card_event-text');
+                    startIso = eventTextEl ? eventTextEl.innerText.trim() : "";
+                }
+
+                const locationEl = card.querySelector('.em-card_event-text a, .em-card_location');
+                const locationText = locationEl ? locationEl.innerText.trim() : "";
+
+                if (title) {
+                    results.push({ title, startIso, locationText });
+                }
+            });
+
+            return results;
+        });
+
+        console.log(`📋 Found ${rawEvents.length} LSU PMAC events. Normalizing...`);
+
+        for (const ev of rawEvents) {
+            const cleanDate = parseIsoDate(ev.startIso);
+            const cleanTime = parseIsoTime(ev.startIso);
+            const eventType = categorizeLSUEvent(ev.title);
+
+            const finalTitle = ev.title.trim().toUpperCase();
+            const dedupeKey = `${cleanDate}-${cleanTime}-${finalTitle}`;
+
+            if (seenEvents.has(dedupeKey)) continue;
+            seenEvents.add(dedupeKey);
+
+            if (cleanDate !== 'TBA' && new Date(cleanDate) < today) {
+                continue;
+            }
+
+            venueData.push({
+                venue: 'Pete Maravich Assembly Center',
+                title: finalTitle,
+                date: cleanDate,
+                time: cleanTime,
+                type: eventType
+            });
+
+            console.log(`✅ Kept: ${finalTitle} on ${cleanDate} (${cleanTime}) [${eventType}]`);
+        }
+
+    } catch (err) {
+        console.error("❌ LSU PMAC Scraper Error:", err.message);
+    } finally {
+        await page.close();
+        await context.close();
+    }
+
+    return venueData;
+}
 // =======================================================================================
 
 (async () => {
@@ -827,7 +966,8 @@ async function scrapeAllianzField(browser) {
     const results = await Promise.all([
         scrapeEnmarket(browser),
         scrapeXfinityS(browser),
-        scrapeAllianzField(browser)
+        scrapeAllianzField(browser), 
+        scrapeLSU(browser)
     ]);
 
     // flatten the array
