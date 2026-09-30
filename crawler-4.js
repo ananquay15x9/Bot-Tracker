@@ -564,6 +564,9 @@ async function scrapeEnmarket(browser) {
     });
     const page = await context.newPage();
     const venueData = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const seenEvents = new Set();
 
     try {
         console.log('🚀 Navigating to Enmarket Arena Schedule...');
@@ -594,19 +597,34 @@ async function scrapeEnmarket(browser) {
         for (const item of eventItems) {
             try {
                 // 1. EXTRACT TITLE
-                const titleLoc = item.locator('span[class*="ufMKn"], [class*="EventName"]').first();
                 let rawTitle = "";
-                if (await titleLoc.count() > 0) {
-                    rawTitle = await titleLoc.innerText();
-                } else {
-                    const linkLoc = item.locator('a[data-testid="event-list-link"]').first();
-                    if (await linkLoc.count() > 0) {
-                        const fullText = await linkLoc.innerText();
-                        rawTitle = fullText.split('\n')[0].trim();
+
+                // Attempt A: Direct text container next to the info button
+                const directTitleLoc = item.locator('[class*="eMziwB"], [class*="hzNfZR"] span').first();
+                if (await directTitleLoc.count() > 0) {
+                    rawTitle = (await directTitleLoc.innerText()).trim();
+                }
+
+                // Attempt B: VisuallyHidden text on the link or info button
+                if (!rawTitle || rawTitle.toLowerCase() === 'find tickets') {
+                    const hiddenTextLoc = item.locator('a[data-testid="event-list-link"] .VisuallyHidden-sc-8buqks-0, button[aria-controls="eventOverflow"] .VisuallyHidden-sc-8buqks-0').last();
+                    if (await hiddenTextLoc.count() > 0) {
+                        const rawHidden = await hiddenTextLoc.innerText();
+                        // Format is typically: "The Red Clay Strays, 10/15/26, 6:30 PM"
+                        rawTitle = rawHidden.split(',')[0].replace(/Open additional information for/i, '').trim();
                     }
                 }
 
-                if (!rawTitle) continue;
+                // Attempt C: Legacy class fallbacks
+                if (!rawTitle || rawTitle.toLowerCase() === 'find tickets') {
+                    const legacyTitle = item.locator('span[class*="ufMKn"], [class*="EventName"]').first();
+                    if (await legacyTitle.count() > 0) {
+                        rawTitle = (await legacyTitle.innerText()).trim();
+                    }
+                }
+
+                // If still empty or literal "Find Tickets", skip
+                if (!rawTitle || rawTitle.toLowerCase() === 'find tickets') continue;
 
                 // 2. EXTRACT DATE
                 let constructedDateStr = "";
@@ -617,7 +635,7 @@ async function scrapeEnmarket(browser) {
 
                 // 3. EXTRACT TIME
                 let rawTime = "TBA";
-                const timeLoc = item.locator('span[class*="bZWmdt"] span, span[aria-hidden="true"] span').first();
+                const timeLoc = item.locator('span[class*="bZWmdt"] span, span[class*="fCBXcp"] .VisuallyHidden-sc-8buqks-0 span').first();
                 if (await timeLoc.count() > 0) {
                     rawTime = await timeLoc.innerText(); // E.g., "7:00 PM"
                 }
@@ -627,8 +645,11 @@ async function scrapeEnmarket(browser) {
                 const cleanTime = formatTime(timeMatch ? timeMatch[0] : 'TBA');
                 const eventType = categorizeEnmarket(rawTitle);
 
-                const today = new Date();
-                today.setHours(0, 0, 0, 0);
+                const finalTitle = rawTitle.replace(/\s+/g, ' ').trim().toUpperCase();
+                const dedupeKey = `${cleanDate}-${cleanTime}-${finalTitle}`;
+
+                if (seenEvents.has(dedupeKey)) continue;
+                seenEvents.add(dedupeKey);
 
                 if (cleanDate !== 'TBA' && new Date(cleanDate) < today) {
                     console.log(`⏩ Skipping past event: ${rawTitle.trim().toUpperCase()} on ${cleanDate}`);
@@ -637,13 +658,13 @@ async function scrapeEnmarket(browser) {
 
                 venueData.push({
                     venue: 'Enmarket Arena',
-                    title: rawTitle.trim().toUpperCase(),
+                    title: finalTitle,
                     date: cleanDate,
                     time: cleanTime,
                     type: eventType
                 });
 
-                console.log(`✅ Extracted: ${rawTitle.trim().toUpperCase()} on ${cleanDate} (${cleanTime})`);
+                console.log(`✅ Extracted: ${finalTitle} on ${cleanDate} (${cleanTime}) [${eventType}]`);
 
             } catch (innerErr) {
                 console.log(`⚠️ Skipping an event due to parsing error: ${innerErr.message}`);
