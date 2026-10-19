@@ -448,7 +448,7 @@ async function scrapeXfinityS(browser)  {
 
                         if (eventDate >= today) {
                             venueData.push({
-                                venue: 'Xfinity Center',
+                                venue: 'Maryland - Xfinity Center',
                                 title: finalTitle,
                                 date: cleanDate,
                                 time: cleanTime,
@@ -959,7 +959,7 @@ async function scrapeLSU(browser) {
             }
 
             venueData.push({
-                venue: 'Pete Maravich Assembly Center',
+                venue: 'LSU - PMAC',
                 title: finalTitle,
                 date: cleanDate,
                 time: cleanTime,

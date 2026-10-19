@@ -597,7 +597,7 @@ async function scrapeGoHeels(browser) {
 
                 for (const singleDate of dates) {
                     venueData.push({
-                        venue: 'Dean Smith Center (Go Heels)',
+                        venue: 'UNC - Dean Smith Center',
                         title: cleanTitle,
                         date: singleDate,
                         time: formatTime(finalTime),
@@ -733,7 +733,7 @@ async function scrapeKFC(browser) {
                         const rawText = await fallbackDateLoc.innerText();
                         const { title, date, time } = normalizeData(rawText, eventTitle);
                         venueData.push({
-                            venue: 'KFC Yum! Center',
+                            venue: 'Louisville - KFC Yum! Center',
                             title: title,
                             date: formatDate(date),
                             time: formatTime(time),
@@ -988,7 +988,7 @@ async function scrapeChartway(browser) {
                 const description = (await descLoc.count() > 0) ? await descLoc.innerText() : "";
 
                 venueData.push({
-                    venue: 'Chartway Arena',
+                    venue: 'Old Dominion - Chartway Arena',
                     title: title.trim(),
                     date: cleanDate,
                     time: formatTime(eventTime),
@@ -1173,7 +1173,7 @@ async function scrapeVillanova(browser) {
                         if (timeMatch) finalTime = timeMatch[1];
 
                         venueData.push({
-                            venue: 'Finneran Pavilion (Villanova)',
+                            venue: 'Villanova - Finneran Pavilion',
                             title: `${sportCode} vs ${opponent}`,
                             date: cleanDate,
                             time: formatTime(finalTime),

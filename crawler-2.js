@@ -282,7 +282,7 @@ async function scrapeJPJ(browser) {
                 const finalTitle = `VIRGINIA VS. ${cleanOpponent(opponent).toUpperCase()} (${sportClean.toUpperCase() || 'EVENT'})`;
 
                 venueData.push({
-                    venue: 'John Paul Jones Arena',
+                    venue: 'Virginia - John Paul Jones',
                     title: finalTitle,
                     date: cleanDate,
                     time: timeVal,
@@ -669,7 +669,7 @@ async function scrapeNAGym(browser) {
             if (cleanDate !== "TBA" && new Date(cleanDate) < today) continue;
 
             finalResults.push({
-                venue: 'Neville Arena',
+                venue: 'Auburn - Neville Arena',
                 title: `AUBURN VS. ${opponent.toUpperCase()}`,
                 date: cleanDate,
                 time: cleanTime,
@@ -735,7 +735,7 @@ async function scrapeNAMB(browser) {
             if (cleanDate !== "TBA" && new Date(cleanDate) < today) continue;
 
             finalResults.push({
-                venue: 'Neville Arena',
+                venue: 'Auburn - Neville Arena',
                 title: `AUBURN VS. ${opponent.toUpperCase()}`,
                 date: cleanDate,
                 time: cleanTime,
@@ -801,7 +801,7 @@ async function scrapeNAWB(browser) {
             if (cleanDate !== "TBA" && new Date(cleanDate) < today) continue;
 
             finalResults.push({
-                venue: 'Neville Arena',
+                venue: 'Auburn - Neville Arena',
                 title: `AUBURN VS. ${opponent.toUpperCase()}`,
                 date: cleanDate,
                 time: cleanTime,
@@ -865,7 +865,7 @@ async function scrapeNAWVB(browser) {
             if (cleanDate !== "TBA" && new Date(cleanDate) < today) continue;
 
             finalResults.push({
-                venue: 'Neville Arena',
+                venue: 'Auburn - Neville Arena',
                 title: `AUBURN VS. ${opponent.toUpperCase()}`,
                 date: cleanDate,
                 time: cleanTime,

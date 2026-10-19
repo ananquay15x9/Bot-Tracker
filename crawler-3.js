@@ -398,7 +398,7 @@ async function scrapeBaylor(browser) {
                     if (!seenEvents.has(dedupeKey)) {
                         seenEvents.add(dedupeKey);
                         venueData.push({
-                            venue: 'Foster Pavilion',
+                            venue: 'Baylor - Foster Pavilion',
                             title: finalTitle,
                             date: cleanDate,
                             time: cleanTime,
@@ -1895,7 +1895,7 @@ async function scrapeDSG(browser) {
         });
 
         venueData = rawEvents.map(ev => ({
-            venue: "Dick's Sporting Goods Park",
+            venue: "Dicks Sporting Goods Park",
             title: ev.title.toUpperCase(),
             date: formatDate(ev.rawDate),
             time: formatTime(ev.rawTime),
