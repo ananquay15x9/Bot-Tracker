@@ -633,15 +633,50 @@ async function scrapeGrandCasino(browser) {
         console.log(`\nScraping Grand Casino Arena...`);
         await page.goto('https://www.grandcasinoarena.com/events', { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-        try {
-            const loadMoreBtn = page.locator('#loadMoreEvents');
-            while (await loadMoreBtn.isVisible({ timeout: 2000 }) && await loadMoreBtn.isEnabled()) {
-                await loadMoreBtn.scrollIntoViewIfNeeded();
-                await loadMoreBtn.click();
-                await page.waitForTimeout(1500);
-                if (await loadMoreBtn.getAttribute('disabled') === 'disabled') break;
+        // Click "Load More" until the button is gone (that's the end of the list).
+        // The button hides itself while loading and can be covered by popups, so:
+        //  - click it with a DOM click (works even if something overlaps it)
+        //  - wait up to 15s for new events after each click
+        //  - only stop once the button has been gone for ~3s, or 3 clicks in a row add nothing
+        const gcLinkSelector = 'h3.title a, .info h3 a';
+        const gcButtonPresent = () => page.evaluate(() => {
+            const btn = document.querySelector('#loadMoreEvents');
+            if (!btn || btn.disabled) return false;
+            const style = window.getComputedStyle(btn);
+            return style.display !== 'none' && style.visibility !== 'hidden' && btn.offsetParent !== null;
+        });
+        let gcFailedClicks = 0;
+        for (let i = 0; i < 150; i++) {
+            let present = await gcButtonPresent().catch(() => false);
+            for (let w = 0; !present && w < 6; w++) {
+                await page.waitForTimeout(500);
+                present = await gcButtonPresent().catch(() => false);
             }
-        } catch (e) {}
+            if (!present) {
+                console.log('   ↪︎ Grand Casino: "Load More" is gone, reached the end of the list.');
+                break;
+            }
+
+            const before = await page.locator(gcLinkSelector).count();
+            const offset = await page.locator('#loadMoreEvents').getAttribute('data-offset').catch(() => '?');
+            await page.locator('#loadMoreEvents').scrollIntoViewIfNeeded().catch(() => {});
+            await page.evaluate(() => document.querySelector('#loadMoreEvents')?.click());
+
+            try {
+                await page.waitForFunction(
+                    ([sel, n]) => document.querySelectorAll(sel).length > n,
+                    [gcLinkSelector, before],
+                    { timeout: 15000 }
+                );
+                gcFailedClicks = 0;
+                console.log(`   ↪︎ Grand Casino Load More (offset ${offset}): ${before} -> ${await page.locator(gcLinkSelector).count()} links`);
+            } catch {
+                gcFailedClicks++;
+                console.log(`   ↪︎ Grand Casino Load More added nothing (attempt ${gcFailedClicks}/3)`);
+                if (gcFailedClicks >= 3) break;
+            }
+            await page.waitForTimeout(800);
+        }
 
         const eventLinks = await page.locator('h3.title a, .info h3 a').all();
         const urlsToVisit = [];
@@ -655,6 +690,9 @@ async function scrapeGrandCasino(browser) {
         console.log(`Found ${uniqueUrls.length} Grand Casino Arena events. Visiting detail pages...`);
 
         const seen = new Set();
+        // The list is always in date order, so a date that comes out earlier than the
+        // previous event's date means the year rolled over (Dec -> Jan = next year).
+        let prevDate = null;
 
         for (const detailUrl of uniqueUrls) {
             try {
@@ -668,27 +706,56 @@ async function scrapeGrandCasino(browser) {
                 let year = "2026";
                 let eventTime = "TBA";
 
-                const monthEl = page.locator('.m-date__month').first();
-                const dayEl = page.locator('.m-date__day').first();
-                const yearEl = page.locator('.m-date__year').first();
+                // Read the date ONLY from the sidebar "Date" item. The first .m-date__* on the
+                // page can be a different date (e.g. the on-sale date), which gave wrong dates
+                // like 2026-11-09 for a January 2027 game.
+                const dateItem = page.locator('.eventDetailList .sidebar_event_date').first();
+                const dateScope = (await dateItem.count() > 0) ? dateItem : page;
+                const monthEl = dateScope.locator('.m-date__month').first();
+                const dayEl = dateScope.locator('.m-date__day').first();
+                const yearEl = dateScope.locator('.m-date__year').first();
+                let yearShown = false;
 
                 if (await monthEl.count() > 0) month = await monthEl.innerText();
                 if (await dayEl.count() > 0) day = await dayEl.innerText();
                 if (await yearEl.count() > 0) {
                     const yText = await yearEl.innerText();
-                    year = yText.replace(',', '').trim();
+                    const y = yText.replace(',', '').trim();
+                    if (/^\d{4}$/.test(y)) { year = y; yearShown = true; }
                 }
+                if (!yearShown && prevDate) year = prevDate.slice(0, 4);
 
                 const startsEl = page.locator('.sidebar_event_starts span').first();
                 if (await startsEl.count() > 0) {
                     eventTime = await startsEl.innerText();
                 }
 
-                const rawDateStr = `${month.trim()} ${day.trim()}, ${year}`;
-                const cleanDate = formatDate(rawDateStr);
+                // Build the date directly. (The shared formatDate() ignores a year written as
+                // "Jan 2, 2027" because of the comma, and falls back to 2026.)
+                const gcMonths = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+                                   jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
+                const gcMonth = gcMonths[month.trim().toLowerCase().slice(0, 3)];
+                const gcDay = (day.match(/\d{1,2}/) || [''])[0];
+                let cleanDate = (gcMonth && gcDay) ? `${year}-${gcMonth}-${gcDay.padStart(2, '0')}` : 'TBA';
                 const cleanTime = formatTime(eventTime);
 
-                if (cleanDate !== "TBA" && new Date(cleanDate) < today) continue;
+                // Keep the list's order: if this date is before the previous event's, it's next year
+                if (/^\d{4}-\d{2}-\d{2}$/.test(cleanDate) && prevDate && cleanDate < prevDate) {
+                    let y = parseInt(cleanDate.slice(0, 4), 10);
+                    let fixed = cleanDate;
+                    while (fixed < prevDate && y < parseInt(prevDate.slice(0, 4), 10) + 2) {
+                        y++;
+                        fixed = `${y}${cleanDate.slice(4)}`;
+                    }
+                    console.log(`   ↪︎ Grand Casino: ${title.replace(/\s+/g, ' ').trim()} read as ${cleanDate}, out of list order -> ${fixed}`);
+                    cleanDate = fixed;
+                }
+                if (/^\d{4}-\d{2}-\d{2}$/.test(cleanDate)) prevDate = cleanDate;
+
+                if (/^\d{4}-\d{2}-\d{2}$/.test(cleanDate)) {
+                    const [cy, cm, cd] = cleanDate.split('-').map(Number);
+                    if (new Date(cy, cm - 1, cd) < today) continue;
+                }
 
                 let eventType = 'Concert';
                 const t = title.toLowerCase();

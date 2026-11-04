@@ -1,1347 +1,1470 @@
 const { chromium } = require('playwright');
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 
-// =========================================================================
-// ANGEL OF THE WINDS ARENA (Everett, WA)
-// List page -> click "More Events" until everything is loaded -> open each
-// event's detail page -> read title, date(s) and time(s).
-// Times on the site are already local (PT), so no time zone conversion.
-// =========================================================================
-
-const AOTW_LIST_URL = 'https://www.angelofthewindsarena.com/events/venue/angel-of-the-winds-arena';
-const AOTW_MONTHS = {
-    jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
-    jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12
-};
-
-// "7:05 PM" -> "7:05PM", "7 PM" -> "7:00PM"
-function formatTimeAOTW(timeStr) {
-    const m = (timeStr || '').match(/(\d{1,2})(?::(\d{2}))?\s*([AP])\.?M/i);
-    if (!m) return 'TBA';
-    return `${parseInt(m[1], 10)}:${m[2] || '00'}${m[3].toUpperCase()}M`;
-}
-
-function isoDateAOTW(year, month, day) {
-    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-}
-
-// Parses the sidebar date into a list of days.
-//   "Friday, November 6, 2026"            -> [2026-11-06]
-//   "November 13 - 15, 2026"              -> [2026-11-13, 2026-11-14, 2026-11-15]
-//   "November 30 - December 2, 2026"      -> [2026-11-30, 2026-12-01, 2026-12-02]
-//   "December 31, 2026 - January 2, 2027" -> [2026-12-31, 2027-01-01, 2027-01-02]
-function parseDateRangeAOTW(text) {
-    const t = (text || '').replace(/\s+/g, ' ').trim();
-    const re = /([A-Za-z]{3,})\.?\s+(\d{1,2})(?:,?\s*(\d{4}))?(?:\s*[-–]\s*(?:([A-Za-z]{3,})\.?\s+)?(\d{1,2})(?:,?\s*(\d{4}))?)?/;
-    const m = t.match(re);
-    if (!m) return [];
-
-    const startMonth = AOTW_MONTHS[m[1].toLowerCase().slice(0, 3)];
-    if (!startMonth) return [];
-    const startDay = parseInt(m[2], 10);
-    const endYearRaw = m[6] ? parseInt(m[6], 10) : null;
-    const startYearRaw = m[3] ? parseInt(m[3], 10) : null;
-    const fallbackYear = new Date().getFullYear();
-
-    // No end part: single day
-    if (!m[5]) {
-        return [isoDateAOTW(startYearRaw || fallbackYear, startMonth, startDay)];
+// Convert date to yyyy-mm-dd format
+function formatDate(dateStr) {
+    if (!dateStr || dateStr === 'TBA' || dateStr.includes('-')) {
+        return dateStr;
     }
 
-    const endMonth = m[4] ? AOTW_MONTHS[m[4].toLowerCase().slice(0, 3)] : startMonth;
-    const endDay = parseInt(m[5], 10);
-    const endYear = endYearRaw || startYearRaw || fallbackYear;
-    const startYear = startYearRaw || (endMonth < startMonth ? endYear - 1 : endYear);
+    dateStr = dateStr.replace(/,\s*$/, '').trim();
 
-    const days = [];
-    const cur = new Date(startYear, startMonth - 1, startDay);
-    const end = new Date(endYear, endMonth - 1, endDay);
-    for (let i = 0; cur <= end && i < 60; i++) {
-        days.push(isoDateAOTW(cur.getFullYear(), cur.getMonth() + 1, cur.getDate()));
-        cur.setDate(cur.getDate() + 1);
+    const monthMap = {
+        'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04',
+        'may': '05', 'jun': '06', 'jul': '07', 'aug': '08',
+        'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12'
+    };
+
+    dateStr = dateStr.replace(/\//g, '').trim();
+
+    const match = dateStr.match(/([A-Za-z]+)\.?\s+(\d+)(?:\s+(\d{4}))?/);
+    if (match) {
+        const month = monthMap[match[1].toLowerCase().substring(0, 3)];
+        const day = match[2].padStart(2, '0');
+        const year = match[3] || '2026';
+
+        if (month) {
+            return `${year}-${month}-${day}`;
+        }
     }
-    return days;
+
+    return dateStr;
 }
 
-function categorizeAOTW(title) {
-    const t = (title || '').toLowerCase();
+// Get academic year based on current date
+function getAcademicYear() {
+    const now = new Date();
+    const currentMonth = now.getMonth() + 1;
+    const currentYear = now.getFullYear();
 
-    // Everett Silvertips = hockey -> Other
-    if (t.includes('everett silvertips') || t.includes('silvertips')) return 'Other';
+    if (currentMonth >= 8) {
+        return { firstHalf: currentYear, secondHalf: currentYear + 1 };
+    } else {
+        return { firstHalf: currentYear - 1, secondHalf: currentYear };
+    }
+}
 
-    // WSU basketball (women's first so it isn't caught by the men's rule)
-    if (/\b(wsu|washington state)\b/.test(t)) {
-        if (/\bwomen'?s?\b|\bwbb\b|\blady\b/.test(t)) return 'NCAA WB';
+// Determine which year a month falls into based on academic calendar
+function getYearForMonth(monthStr) {
+    const academicYear = getAcademicYear();
+    if (monthStr === 'oct' || monthStr === 'nov' || monthStr === 'dec') {
+        return academicYear.firstHalf;
+    } else {
+        return academicYear.secondHalf;
+    }
+}
+
+// Format time to 12:00AM or 12:00PM (no space)
+function formatTime(timeStr) {
+    if (!timeStr || timeStr === 'TBA') {
+        return 'TBA';
+    }
+
+    if (timeStr.toUpperCase().includes('NOON')) {
+        return '12:00PM';
+    }
+
+    let cleaned = timeStr.toUpperCase().replace(/\./g, '').replace(/ET|CT|PT|MT|EDT|CDT/g, '').trim();
+    const match = cleaned.match(/(\d{1,2}(?::\d{2})?)\s*(AM|PM)/i);
+
+    if (match) {
+        let timePart = match[1];
+        let ampm = match[2].toUpperCase();
+
+        if (!timePart.includes(':')) {
+            timePart += ':00';
+        }
+
+        return `${timePart}${ampm}`;
+    }
+
+    return cleaned.replace(/\s+/g, '');
+}
+
+// Expand date ranges into individual dates
+function expandDateRange(dateStr, isGoHeels = false) {
+    const monthMap = {
+        'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4,
+        'may': 5, 'jun': 6, 'jul': 7, 'aug': 8,
+        'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
+    };
+
+    const pattern1 = dateStr.match(/([A-Z]+)\.?\s+(\d+)\s*-\s*(\d+),?\s*(\d{4})/i);
+    if (pattern1) {
+        const monthStr = pattern1[1].toLowerCase().substring(0, 3);
+        const monthNum = monthMap[monthStr];
+        const startDay = parseInt(pattern1[2]);
+        const endDay = parseInt(pattern1[3]);
+        const year = pattern1[4];
+
+        const dates = [];
+        for (let day = startDay; day <= endDay; day++) {
+            dates.push(`${year}-${String(monthNum).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
+        }
+        return dates;
+    }
+
+    const pattern2 = dateStr.match(/([A-Z]+)\.?\s+(\d+)\s*-\s*([A-Z]+)\.?\s+(\d+)/i);
+    if (pattern2) {
+        const startMonthStr = pattern2[1].toLowerCase().substring(0, 3);
+        const startDay = parseInt(pattern2[2]);
+        const endMonthStr = pattern2[3].toLowerCase().substring(0, 3);
+        const endDay = parseInt(pattern2[4]);
+
+        const startMonth = monthMap[startMonthStr];
+        const endMonth = monthMap[endMonthStr];
+
+        let startYear = isGoHeels ? getYearForMonth(startMonthStr) : new Date().getFullYear();
+        let endYear = isGoHeels ? getYearForMonth(endMonthStr) : new Date().getFullYear();
+
+        const dates = [];
+
+        if (startMonth === endMonth) {
+            for (let day = startDay; day <= endDay; day++) {
+                dates.push(`${startYear}-${String(startMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
+            }
+        } else {
+            const daysInStartMonth = new Date(startYear, startMonth, 0).getDate();
+            for (let day = startDay; day <= daysInStartMonth; day++) {
+                dates.push(`${startYear}-${String(startMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
+            }
+            for (let day = 1; day <= endDay; day++) {
+                dates.push(`${endYear}-${String(endMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
+            }
+        }
+        return dates;
+    }
+
+    return [dateStr];
+}
+
+function formatGoHeelsDate(dateStr) {
+    if (!dateStr || dateStr === 'TBA') return dateStr;
+
+    dateStr = dateStr.replace(/\n/g, ' ').replace(/\([A-Za-z]+\)/g, '').replace(/\s+/g, ' ').trim();
+    dateStr = dateStr.replace(/(\b[A-Za-z]{3}\s+\d+)\s+\1/g, '$1');
+    dateStr = dateStr.replace(/,\s*$/, '').trim();
+
+    const monthMap = {
+        'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04',
+        'may': '05', 'jun': '06', 'jul': '07', 'aug': '08',
+        'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12'
+    };
+
+    if (dateStr.includes(' - ') || /\d+\s*-/.test(dateStr)) {
+        return dateStr;
+    }
+
+    const match = dateStr.match(/([A-Za-z]+)\.?\s+(\d+)/);
+    if (match) {
+        const monthStr = match[1].toLowerCase().substring(0, 3);
+        const month = monthMap[monthStr];
+        const day = match[2].padStart(2, '0');
+        const year = getYearForMonth(monthStr);
+
+        if (month) {
+            return `${year}-${month}-${day}`;
+        }
+    }
+
+    return dateStr;
+}
+
+function normalizeData(rawDate, rawTitle) {
+    const title = rawTitle.trim().replace(/\s+/g, ' ');
+    let cleanedText = rawDate.replace(/\([A-Za-z]+\)|[A-Za-z]+, /g, '').trim();
+    cleanedText = cleanedText.replace(/\s+/g, ' ');
+
+    let datePart = cleanedText;
+    let timePart = "TBA";
+
+    if (cleanedText.toLowerCase().includes('pm') || cleanedText.toLowerCase().includes('am')) {
+        const timeMatch = cleanedText.match(/(\d+(?::\d+)?\s*(?:pm|am|p\.m\.|a\.m\.))/i);
+        if (timeMatch) {
+            timePart = timeMatch[1].trim();
+            timePart = timePart.replace(/p\.m\./i, 'PM').replace(/a\.m\./i, 'AM');
+            timePart = timePart.replace(/\s*pm/i, ' PM').replace(/\s*am/i, ' AM');
+            timePart = timePart.trim();
+
+            datePart = cleanedText.substring(0, timeMatch.index).trim();
+            if (datePart && !datePart.endsWith(',')) {
+                datePart = datePart + ',';
+            }
+        }
+    }
+
+    return { title, date: datePart, time: timePart };
+}
+
+async function setupTranscendKiller(page) {
+    await page.addInitScript(() => {
+        const kill = () => {
+            const host = document.querySelector('#transcend-consent-manager, .satisfi_btn, .satisfi_container, #satisfi_chat_container');
+            if (host) host.remove();
+            document.documentElement.style.overflow = 'auto';
+            document.body.style.overflow = 'auto';
+            document.body.style.position = 'static';
+        };
+        kill();
+        const obs = new MutationObserver(() => kill());
+        obs.observe(document.documentElement, { childList: true, subtree: true });
+    });
+
+    await page.route('**/*', (route) => {
+        const u = route.request().url();
+        if (u.includes('transcend-cdn.com/cm/') || u.includes('transcend.io') || (u.includes('/consent') && u.includes('transcend'))) {
+            return route.abort();
+        }
+        return route.continue();
+    });
+}
+
+//========================================
+// CATEGORIZATION FUNCTIONS
+
+function categorizeCapitalOne(title, description) {
+    const titleLower = title.toLowerCase();
+    const descLower = (description || "").toLowerCase();
+    const fullText = (titleLower + " " + descLower);
+
+    if (fullText.includes('wizards') || fullText.includes('nba')) return 'NBA';
+    if (fullText.includes('capitals') || fullText.includes('nhl')) return 'NHL';
+
+    const collegeTeams = ['georgetown', 'hoyas', 'creighton', 'villanova', 'marquette', 'providence', 'xavier', 'uconn'];
+    const isCollegeGame = collegeTeams.some(team => titleLower.includes(team)) || fullText.includes("men's basketball");
+    if (isCollegeGame) return 'NCAA MB';
+
+    if (titleLower.includes('mystics') || titleLower.includes('wnba')) return 'WNBA';
+
+    const musicKeywords = ['k-pop', 'jyp', 'tour', 'album', 'stadium', 'performance', 'hits', 'billboard', 'artist', 'live', 'music', 'singer', 'band', 'grammy', 'female group', 'celebrated', 'concert'];
+    if (musicKeywords.some(kw => fullText.includes(kw))) return 'Concert';
+
+    return 'Other';
+}
+
+function categorizeEnterprise(title, description) {
+    const titleLower = title.toLowerCase();
+    const fullText = (title + " " + (description || "")).toLowerCase();
+
+    if (titleLower.includes('blues') || titleLower.includes('nhl')) return 'NHL';
+    if (titleLower.includes('billikens') || titleLower.includes('slu') || titleLower.includes('ncaa') || titleLower.includes('basketball tournament') || titleLower.includes('missouri valley')) return 'NCAA MB';
+
+    const familyKeywords = ['disney', 'pixar', 'children', 'family', 'mickey', 'frozen', 'marvel'];
+    if (familyKeywords.some(kw => fullText.includes(kw))) return 'Other';
+
+    const musicKeywords = ['tour', 'album', 'concert', 'live', 'band', 'orchestra', 'symphony', 'debut', 'grammy', 'special guest', 'performance', 'music', 'festival', 'performing', 'show', 'comedian', 'comedy'];
+    if (musicKeywords.some(kw => fullText.includes(kw))) return 'Concert';
+
+    return 'Other';
+}
+
+function categorizeGoHeels(title) {
+    const titleLower = title.toLowerCase();
+    if (titleLower.includes('unc vs') || titleLower.includes('tar heels') || titleLower.includes('acc tournament') || titleLower.includes('tournament') || titleLower.includes('scrimmage')) {
         return 'NCAA MB';
     }
-    if (/women'?s basketball/.test(t)) return 'NCAA WB';
-    if (/men'?s basketball/.test(t)) return 'NCAA MB';
+    const musicKeywords = ['concert', 'live music', 'band', 'singer', 'artist'];
+    if (musicKeywords.some(kw => titleLower.includes(kw))) return 'Concert';
+    return 'Other';
+}
 
-    // Concerts (whole words only, so "Monster Jam" or "Holiday on Ice" aren't counted)
-    const concertWords = [
-        'music', 'wonderland', 'concert', 'tour', 'live', 'band', 'symphony', 'orchestra',
-        'tribute', 'festival', 'singer', 'rock', 'country', 'hip hop', 'rap', 'r&b', 'jazz',
-        'choir', 'unplugged', 'acoustic'
-    ];
-    if (concertWords.some(w => new RegExp(`\\b${w.replace(/[&]/g, '\\$&')}\\b`).test(t))) return 'Concert';
+function assignType(title, description) {
+    const titleLower = title.toLowerCase();
+    const fullText = (title + " " + description).toLowerCase();
+
+    const nhlMarkers = ['nhl', 'wild', 'blues', 'capitals', 'blackhawks'];
+    const isVersusMatch = titleLower.includes(' vs ') || titleLower.includes(' vs. ');
+
+    if ((nhlMarkers.some(m => fullText.includes(m)) || isVersusMatch) && !fullText.includes('pwhl')) return 'NHL';
+    if (fullText.includes('pwhl') || (fullText.includes('women') && fullText.includes('hockey'))) return 'PWHL';
+
+    const musicMarkers = ['tour', 'album', 'grammy', 'live', 'artist', 'concert', 'special guest', 'debut'];
+    if (musicMarkers.some(m => fullText.includes(m))) return 'Concert';
 
     return 'Other';
 }
 
-// Runs inside the detail page and returns the raw pieces we need
-function extractAOTWDetail() {
-    const clean = s => (s || '').replace(/\s+/g, ' ').trim();
+function categorizeKFC(title, description) {
+    const titleLower = title.toLowerCase();
+    const descLower = (description || "").toLowerCase();
+    const fullText = (titleLower + " " + descLower);
 
-    const title = clean(document.querySelector('h1.title')?.textContent);
+    if (fullText.includes("men's basketball") || (titleLower.includes('louisville') && titleLower.includes('basketball') && !titleLower.includes('women'))) return 'NCAA MB';
+    if (fullText.includes("women's basketball") || titleLower.includes("women's basketball")) return 'NCAA WB';
+    if (fullText.includes("volleyball") || titleLower.includes('volleyball')) return 'NCAA WVB';
 
-    const dateLi = document.querySelector('.eventDetailList .sidebar_event_date');
-    let dateText = '';
-    if (dateLi) {
-        const clone = dateLi.cloneNode(true);
-        clone.querySelectorAll('.label, svg').forEach(el => el.remove());
-        dateText = clean(clone.textContent);
-    }
+    const musicKeywords = ['tour', 'album', 'concert', 'live', 'artist', 'band', 'grammy', 'performing', 'music'];
+    if (musicKeywords.some(kw => fullText.includes(kw))) return 'Concert';
 
-    const startsLi = document.querySelector('.eventDetailList .sidebar_event_starts');
-    let startsText = '';
-    if (startsLi) {
-        const clone = startsLi.cloneNode(true);
-        clone.querySelectorAll('.label, svg').forEach(el => el.remove());
-        startsText = clean(clone.textContent);
-    }
-
-    // Multi-date events list each showing in the body
-    const showings = Array.from(document.querySelectorAll('ul.list li.listItem')).map(li => ({
-        dateText: clean(li.querySelector('.showings_date')?.textContent),
-        timeText: clean(li.querySelector('.time')?.textContent),
-        // e.g. "Buy Tickets for November 14 2026 at 2:00 PM" (has the year)
-        ticketTitle: clean(li.querySelector('a.tickets')?.getAttribute('title'))
-    }));
-
-    return { title, dateText, startsText, showings };
+    return 'Other';
 }
 
-// Opens a detail page and waits for its title; retries once with a longer wait
-// (pages load slowly when several venue browsers run at the same time)
-async function gotoDetailWithRetry(page, url) {
-    for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: attempt === 1 ? 30000 : 60000 });
-            await page.waitForSelector('h1.title', { timeout: attempt === 1 ? 15000 : 30000 });
-            return;
-        } catch (err) {
-            if (attempt === 2) throw err;
-            console.log(`   ↻ Slow page, retrying: ${url}`);
-            await page.waitForTimeout(2000);
-        }
-    }
+function categorizeAmerant(title, description) {
+    const titleLower = title.toLowerCase();
+    const descLower = (description || "").toLowerCase();
+    const fullText = (titleLower + " " + descLower);
+
+    if (fullText.includes('mickey') || fullText.includes('disney') || fullText.includes('wwe')) return 'Other';
+    if (titleLower.includes('panthers') || titleLower.includes('nhl') || titleLower.includes('hockey') || titleLower.includes('vs') || titleLower.includes('fla') || titleLower.includes('tor') || titleLower.includes('det') || titleLower.includes('cbj') || titleLower.includes('bos') || titleLower.includes('ott') || titleLower.includes('nyr')) return 'NHL';
+
+    const musicKeywords = ['concert', 'band', 'orchestra', 'symphony', 'choir', 'live', 'performance', 'tour', 'festival', 'show', 'tribute'];
+    if (musicKeywords.some(kw => fullText.includes(kw))) return 'Concert';
+
+    return 'Other';
 }
 
-async function scrapeAngelOfTheWinds(browser) {
-    const context = await browser.newContext({
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-        viewport: { width: 1366, height: 900 }
-    });
-    const page = await context.newPage();
+function categorizeCanadaLifeCentre(title, description) {
+    const fullText = (title + " " + description).toLowerCase();
+    if (fullText.includes('jets') || fullText.includes('nhl')) return 'NHL';
+    if (fullText.includes('moose') || fullText.includes('ahl')) return 'AHL';
+    if (fullText.includes('sea bears') || fullText.includes('cebl') || fullText.includes('basketball')) return 'CEBL';
+
+    const musicKeywords = ['concert', 'music', 'live', 'band', 'rock', 'orchestra', 'symphony', 'singer', 'festival', 'album', 'billboard'];
+    if (musicKeywords.some(kw => fullText.includes(kw))) return 'Concert';
+
+    return 'Other';
+}
+
+function categorizeChartway(title) {
+    const t = title.toUpperCase();
+    if (t.includes("MEN'S BASKETBALL") || t.includes("ODU MBB")) return 'NCAA MB';
+    if (t.includes("WOMEN'S BASKETBALL") || t.includes("ODU WBB")) return 'NCAA WB';
+    if (t.includes("VOLLEYBALL")) return 'NCAA WVB';
+    if (t.includes("WRESTLING")) return 'Wrestling';
+    if (t.includes("CONCERT") || t.includes("LIVE IN CONCERT")) return 'Concert';
+    return 'Other';
+}
+
+function categorizeFaurotField(opponent) {
+    return 'NCAA Football';
+}
+
+function categorizeTQL(title, categoryText) {
+    const titleLower = title.toLowerCase();
+    const catLower = categoryText.toLowerCase();
+
+    if (titleLower.includes('fc cincinnati 2') || titleLower.includes('next pro')) return 'MLS Next Pro';
+    if (titleLower.includes('fc cincinnati') || catLower.includes('soccer')) return 'MLS';
+    if (catLower.includes('concert') || titleLower.includes('tour')) return 'Concert';
+    if (titleLower.includes('stadium tour')) return 'Other';
+    return 'Other';
+}
+
+function categorizeVillanova(sportCode, opponent) {
+    const text = (sportCode + " " + opponent).toUpperCase();
+    if (text.includes('MBB')) return 'NCAA MB';
+    if (text.includes('WBB')) return 'NCAA WB';
+    if (text.includes('WVB') || text.includes('VOLLEYBALL')) return 'NCAA WVB';
+    return null;
+}
+
+function categorizeSMG(text) {
+    const t = text.toLowerCase();
+    if (t.includes('concert') || t.includes('tour') || t.includes('live in') || t.includes('sonic temple')) return 'Concert';
+    if (t.includes('mls next pro') || t.includes('crew 2')) return 'MLS Next Pro';
+    if (t.includes('mls') || t.includes('columbus crew') || t.includes('uswnt')) return 'MLS';
+    return 'Other';
+}
+
+// ======================================================================================
+// VENUE SCRAPER FUNCTIONS
+
+// Capital One Main Function
+async function scrapeCapitalOne(browser) {
+    const page = await browser.newPage();
     const venueData = [];
-    const seen = new Set();
+    try {
+        await page.goto('https://www.capitalonearena.com/events', { waitUntil: 'domcontentloaded', timeout: 30000 });
+        console.log(`\nScraping Capital One Arena...`);
+
+        try { await page.getByRole('button', { name: 'Accept All' }).click({ timeout: 4000 }); } catch(e) {}
+
+        while (await page.getByRole('button', { name: 'More Events' }).isVisible()) {
+            await page.getByRole('button', { name: 'More Events' }).click();
+            await page.waitForTimeout(1000);
+        }
+
+        const eventItems = await page.locator('.info.clearfix').all();
+        const eventsToScrape = [];
+
+        for (const item of eventItems) {
+            const titleLocator = item.locator('h3.title a');
+            const url = await titleLocator.getAttribute('href');
+            const rawTitle = await titleLocator.innerText();
+            const dateText = await item.locator('.date').innerText();
+
+            eventsToScrape.push({
+                url: url.startsWith('http') ? url : `https://www.capitalonearena.com${url}`,
+                rawTitle,
+                dateText
+            });
+        }
+
+        console.log(`Collected ${eventsToScrape.length} Capital One event links. Deep scraping...`);
+
+        for (const event of eventsToScrape) {
+            try {
+                await page.goto(event.url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+
+                let eventDescription = "";
+                const descLocator = page.locator('.description_inner');
+                if (await descLocator.count() > 0) {
+                    eventDescription = await descLocator.textContent();
+                }
+
+                const cleanTitle = event.rawTitle.trim().replace(/\s+/g, ' ');
+                const eventType = categorizeCapitalOne(cleanTitle, eventDescription);
+
+                console.log(`Pulling: ${cleanTitle} as ${eventType}`);
+
+                const { title, date, time } = normalizeData(event.dateText, cleanTitle);
+                const formattedDate = formatDate(date);
+                const dates = expandDateRange(formattedDate);
+
+                for (const singleDate of dates) {
+                    venueData.push({
+                        venue: 'Capital One Arena',
+                        title,
+                        date: singleDate,
+                        time: formatTime(time),
+                        type: eventType
+                    });
+                }
+            } catch (e) { console.log(`Capital One subpage failed: ${e.message.substring(0, 45)}`); }
+        }
+    } catch (e) { console.log(`Capital One Arena failed: ${e.message}`); }
+    await page.close();
+    return venueData;
+}
+
+
+
+// EC Main Function
+async function scrapeEnterprise(browser) {
+    const page = await browser.newPage();
+    const venueData = [];
+    try {
+        await page.goto('https://www.enterprisecenter.com/events', { waitUntil: 'domcontentloaded', timeout: 30000 });
+        console.log(`\nScraping Enterprise Center...`);
+
+        await page.waitForSelector('#eventsList .event-entry', { timeout: 15000 });
+
+        try {
+            while (true) {
+                const loadMoreVisible = await page.isVisible('#loadMoreEvents');
+                if (!loadMoreVisible) break;
+
+                const beforeCount = await page.locator('#eventsList .event-entry').count();
+                await page.locator('#loadMoreEvents').scrollIntoViewIfNeeded();
+                await page.locator('#loadMoreEvents').click();
+                await page.waitForTimeout(1500);
+
+                const afterCount = await page.locator('#eventsList .event-entry').count();
+                if (afterCount <= beforeCount) break;
+            }
+        } catch (e) {}
+
+        const infoLinks = await page.locator('#eventsList a.more').all();
+        const urlsToVisit = [];
+
+        for (const link of infoLinks) {
+            const href = await link.getAttribute('href');
+            if (href) {
+                urlsToVisit.push(href.startsWith('http') ? href : `https://www.enterprisecenter.com${href}`);
+            }
+        }
+
+        const uniqueUrls = [...new Set(urlsToVisit)];
+
+        for (const detailUrl of uniqueUrls) {
+            try {
+                await page.goto(detailUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+                const eventTitle = await page.locator('h1').first().innerText();
+
+                let eventDescription = "";
+                const descLocator = page.locator('.collapse-wrapper');
+                if (await descLocator.count() > 0) {
+                    try {
+                        const readMoreBtn = page.locator('span.readmore');
+                        if (await readMoreBtn.isVisible()) {
+                            await readMoreBtn.click();
+                            await page.waitForTimeout(300);
+                        }
+                        eventDescription = await descLocator.textContent();
+                    } catch (e) {}
+                }
+
+                const eventType = categorizeEnterprise(eventTitle, eventDescription);
+                console.log(`Pulling: ${eventTitle.trim()} as ${eventType}`);
+
+                const showtimes = await page.locator('.showings_list li.entry').all();
+                for (const show of showtimes) {
+                    const dateText = await show.locator('.date').innerText();
+                    const timeText = await show.locator('.time').innerText();
+                    const rawDateAndTime = `${dateText.trim()} ${timeText.trim()}`;
+
+                    const { title, date, time } = normalizeData(rawDateAndTime, eventTitle.trim());
+                    const formattedDate = formatDate(date);
+                    const dates = expandDateRange(formattedDate);
+
+                    for (const singleDate of dates) {
+                        venueData.push({
+                            venue: 'Enterprise Center',
+                            title,
+                            date: singleDate,
+                            time: formatTime(time),
+                            type: eventType
+                        });
+                    }
+                }
+            } catch (e) { console.log(`Error scraping Enterprise event detail: ${e.message.substring(0, 45)}`); }
+        }
+    } catch (e) { console.log(`Enterprise failed: ${e.message}`); }
+    await page.close();
+    return venueData;
+}
+
+// Dean Smith Center Main Function
+async function scrapeGoHeels(browser) {
+    const page = await browser.newPage();
+    const venueData = [];
+    try {
+        await page.goto('https://goheels.com/sports/mens-basketball/schedule', { waitUntil: 'domcontentloaded', timeout: 30000 });
+        console.log(`\nScraping Go Heels (Dean Smith Center)...`);
+
+        await page.evaluate(() => {
+            const host = document.querySelector('#transcend-consent-manager');
+            if (host) host.remove();
+            document.documentElement.style.overflow = 'auto';
+            document.body.style.overflow = 'auto';
+            document.body.style.position = 'static';
+        });
+
+        try {
+            await page.evaluate(async () => {
+                await new Promise((resolve) => {
+                    let totalHeight = 0;
+                    let distance = 200;
+                    let timer = setInterval(() => {
+                        let scrollHeight = document.body.scrollHeight;
+                        window.scrollBy(0, distance);
+                        totalHeight += distance;
+                        if (totalHeight >= scrollHeight) {
+                            clearInterval(timer);
+                            resolve();
+                        }
+                    }, 100);
+                });
+            });
+        } catch (e) {}
+
+        const gameCards = await page.locator('.s-game-card__header-inner-top-inner, .s-game-card').all();
+        console.log(`Found ${gameCards.length} Go Heels games! Checking venue location...`);
+
+        for (const card of gameCards) {
+            try {
+                const cardText = await card.innerText();
+                const cardTextLower = cardText.toLowerCase();
+
+                // Requirement 3: need to only scrape from 'Smith Center, Chapel Hill' only
+                if (!cardTextLower.includes('smith center') && !cardTextLower.includes('chapel hill')) {
+                    continue;
+                }
+
+                const opponent = await card.locator('[data-test-id="s-game-card-standard__header-team-opponent-link"]').innerText();
+
+                let dateText = '';
+                const upcomingDate = card.locator('[data-test-id="s-game-card-standard__header-game-date"]');
+                const pastDate = card.locator('[data-test-id="s-game-card-standard__header-game-date-details"]');
+
+                if (await upcomingDate.count() > 0) {
+                    dateText = await upcomingDate.innerText();
+                } else if (await pastDate.count() > 0) {
+                    dateText = await pastDate.innerText();
+                }
+
+                const timeLoc = card.locator('[data-test-id="s-game-card-standard__header-game-time"]');
+                const timeText = (await timeLoc.count() > 0) ? await timeLoc.innerText() : "TBA";
+
+                const cleanTitle = `UNC vs ${opponent.trim()}`;
+                const rawDateAndTime = `${dateText.trim()} ${timeText.trim()}`;
+                
+                let finalDate = rawDateAndTime;
+                let finalTime = 'TBA';
+
+                const timeMatch = rawDateAndTime.match(/(\d+(?::\d+)?\s*(?:p\.m\.|a\.m\.|PM|AM))/i);
+                if (timeMatch) {
+                    finalTime = timeMatch[1].trim().replace(/p\.m\./i, 'PM').replace(/a\.m\./i, 'AM').replace(/\s+/g, ' ').trim();
+                    finalDate = rawDateAndTime.substring(0, timeMatch.index).trim();
+                    if (finalDate && !finalDate.endsWith(',')) {
+                        finalDate = finalDate + ',';
+                    }
+                }
+
+                const eventType = categorizeGoHeels(cleanTitle);
+                const formattedDate = formatGoHeelsDate(finalDate);
+                const dates = expandDateRange(formattedDate, true);
+
+                for (const singleDate of dates) {
+                    venueData.push({
+                        venue: 'UNC - Dean Smith Center',
+                        title: cleanTitle,
+                        date: singleDate,
+                        time: formatTime(finalTime),
+                        type: eventType
+                    });
+                }
+                console.log(`✅ Kept Smith Center game: ${cleanTitle} on ${dates[0]}`);
+            } catch (e) { console.log(`Error scraping game card: ${e.message.substring(0, 45)}`); }
+        }
+    } catch (e) { console.log(`Go Heels failed: ${e.message}`); }
+    await page.close();
+    return venueData;
+}
+
+// Grand Casino Arena Main Function
+async function scrapeGrandCasino(browser) {
+    const page = await browser.newPage();
+    const venueData = [];
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const isPast = (iso) => {
-        const [y, m, d] = iso.split('-').map(Number);
-        return new Date(y, m - 1, d) < today;
-    };
-
-    const addRow = (title, date, time, type) => {
-        if (date !== 'TBA' && isPast(date)) return;
-        const key = `${date}|${time}|${title}`;
-        if (seen.has(key)) return;
-        seen.add(key);
-        venueData.push({ venue: 'Angel of the Winds', title, date, time, type });
-        console.log(`✅ Kept: ${title} on ${date} (${time}) [${type}]`);
-    };
-
     try {
-        console.log('\n🚀 Scraping Angel of the Winds Arena...');
-        await page.goto(AOTW_LIST_URL, { waitUntil: 'domcontentloaded', timeout: 45000 });
+        console.log(`\nScraping Grand Casino Arena...`);
+        await page.goto('https://www.grandcasinoarena.com/events', { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-        try {
-            const cookieBtn = page.locator('#onetrust-accept-btn-handler, button:has-text("Accept")').first();
-            if (await cookieBtn.isVisible({ timeout: 3000 })) await cookieBtn.click();
-        } catch (e) {}
-
-        const linkSelector = 'a[href*="/events/detail/"]';
-        await page.waitForSelector(linkSelector, { timeout: 20000 });
-
-        // ---- Click "More Events" until the button is gone (that's the end of the list).
-        // The button hides/disables itself while loading and can be covered by popups, so:
+        // Click "Load More" until the button is gone (that's the end of the list).
+        // The button hides itself while loading and can be covered by popups, so:
         //  - click it with a DOM click (works even if something overlaps it)
-        //  - wait up to 15s for new events
-        //  - only stop once the button has been gone for a few seconds, or 3 clicks in a row add nothing
-        const countEvents = () => page.locator(linkSelector).count();
-        const buttonPresent = () => page.evaluate(() => {
+        //  - wait up to 15s for new events after each click
+        //  - only stop once the button has been gone for ~3s, or 3 clicks in a row add nothing
+        const gcLinkSelector = 'h3.title a, .info h3 a';
+        const gcButtonPresent = () => page.evaluate(() => {
             const btn = document.querySelector('#loadMoreEvents');
-            if (!btn) return false;
+            if (!btn || btn.disabled) return false;
             const style = window.getComputedStyle(btn);
             return style.display !== 'none' && style.visibility !== 'hidden' && btn.offsetParent !== null;
         });
-
-        let failedClicks = 0;
+        let gcFailedClicks = 0;
         for (let i = 0; i < 150; i++) {
-            // Give the button a moment to come back after the previous load
-            let present = await buttonPresent();
+            let present = await gcButtonPresent().catch(() => false);
             for (let w = 0; !present && w < 6; w++) {
                 await page.waitForTimeout(500);
-                present = await buttonPresent();
+                present = await gcButtonPresent().catch(() => false);
             }
             if (!present) {
-                console.log('   ↪︎ "More Events" button is gone, reached the end of the list.');
+                console.log('   ↪︎ Grand Casino: "Load More" is gone, reached the end of the list.');
                 break;
             }
 
-            const before = await countEvents();
+            const before = await page.locator(gcLinkSelector).count();
             const offset = await page.locator('#loadMoreEvents').getAttribute('data-offset').catch(() => '?');
-
             await page.locator('#loadMoreEvents').scrollIntoViewIfNeeded().catch(() => {});
             await page.evaluate(() => document.querySelector('#loadMoreEvents')?.click());
 
             try {
                 await page.waitForFunction(
                     ([sel, n]) => document.querySelectorAll(sel).length > n,
-                    [linkSelector, before],
+                    [gcLinkSelector, before],
                     { timeout: 15000 }
                 );
-                failedClicks = 0;
-                console.log(`   ↪︎ More Events (offset ${offset}): ${before} -> ${await countEvents()} links`);
+                gcFailedClicks = 0;
+                console.log(`   ↪︎ Grand Casino Load More (offset ${offset}): ${before} -> ${await page.locator(gcLinkSelector).count()} links`);
             } catch {
-                failedClicks++;
-                console.log(`   ↪︎ More Events click added nothing (attempt ${failedClicks}/3)`);
-                if (failedClicks >= 3) break;
+                gcFailedClicks++;
+                console.log(`   ↪︎ Grand Casino Load More added nothing (attempt ${gcFailedClicks}/3)`);
+                if (gcFailedClicks >= 3) break;
             }
             await page.waitForTimeout(800);
         }
 
-        // ---- Collect unique detail links
-        const detailUrls = await page.evaluate(sel => {
-            const urls = Array.from(document.querySelectorAll(sel)).map(a => a.href.split('#')[0]);
-            return Array.from(new Set(urls));
-        }, linkSelector);
-        console.log(`📋 Found ${detailUrls.length} Angel of the Winds events.`);
+        const eventLinks = await page.locator('h3.title a, .info h3 a').all();
+        const urlsToVisit = [];
+        for (const link of eventLinks) {
+            const href = await link.getAttribute('href');
+            if (href) {
+                urlsToVisit.push(href.startsWith('http') ? href : `https://www.grandcasinoarena.com${href}`);
+            }
+        }
+        const uniqueUrls = [...new Set(urlsToVisit)];
+        console.log(`Found ${uniqueUrls.length} Grand Casino Arena events. Visiting detail pages...`);
 
-        // ---- Open each detail page
-        for (const url of detailUrls) {
+        const seen = new Set();
+        // The list is always in date order, so a date that comes out earlier than the
+        // previous event's date means the year rolled over (Dec -> Jan = next year).
+        let prevDate = null;
+
+        for (const detailUrl of uniqueUrls) {
             try {
-                await gotoDetailWithRetry(page, url);
+                await page.goto(detailUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
 
-                const d = await page.evaluate(extractAOTWDetail);
-                if (!d.title) continue;
+                const titleLoc = page.locator('h1.title, h1').first();
+                const title = (await titleLoc.count() > 0) ? await titleLoc.innerText() : "Event";
 
-                const title = d.title;
-                const type = categorizeAOTW(title);
-                const sidebarDays = parseDateRangeAOTW(d.dateText);
-                const sidebarYear = sidebarDays.length ? parseInt(sidebarDays[0].slice(0, 4), 10) : today.getFullYear();
-                const sidebarStartMonth = sidebarDays.length ? parseInt(sidebarDays[0].slice(5, 7), 10) : 1;
+                let month = "";
+                let day = "";
+                let year = "2026";
+                let eventTime = "TBA";
 
-                if (d.showings.length > 0) {
-                    // Multi-date event: one row per showing (date + time)
-                    for (const s of d.showings) {
-                        let date = 'TBA';
-                        const fromTicket = s.ticketTitle.match(/([A-Za-z]{3,})\s+(\d{1,2}),?\s+(\d{4})/);
-                        if (fromTicket && AOTW_MONTHS[fromTicket[1].toLowerCase().slice(0, 3)]) {
-                            date = isoDateAOTW(fromTicket[3], AOTW_MONTHS[fromTicket[1].toLowerCase().slice(0, 3)], fromTicket[2]);
-                        } else {
-                            const md = s.dateText.match(/([A-Za-z]{3,})\s+(\d{1,2})/g);
-                            const last = md ? md[md.length - 1].match(/([A-Za-z]{3,})\s+(\d{1,2})/) : null;
-                            const month = last ? AOTW_MONTHS[last[1].toLowerCase().slice(0, 3)] : null;
-                            if (month) {
-                                // A showing in an earlier month than the event start rolls into next year
-                                const year = month < sidebarStartMonth ? sidebarYear + 1 : sidebarYear;
-                                date = isoDateAOTW(year, month, last[2]);
-                            }
-                        }
-                        const time = formatTimeAOTW(s.timeText || s.ticketTitle);
-                        addRow(title, date, time, type);
-                    }
-                } else if (sidebarDays.length > 0) {
-                    // Single date (or a range with no showings list): use "Event Starts" time
-                    const time = formatTimeAOTW(d.startsText);
-                    for (const day of sidebarDays) addRow(title, day, time, type);
-                } else {
-                    console.log(`   ⚠️ No date found for "${title}" (${url})`);
+                // Read the date ONLY from the sidebar "Date" item. The first .m-date__* on the
+                // page can be a different date (e.g. the on-sale date), which gave wrong dates
+                // like 2026-11-09 for a January 2027 game.
+                const dateItem = page.locator('.eventDetailList .sidebar_event_date').first();
+                const dateScope = (await dateItem.count() > 0) ? dateItem : page;
+                const monthEl = dateScope.locator('.m-date__month').first();
+                const dayEl = dateScope.locator('.m-date__day').first();
+                const yearEl = dateScope.locator('.m-date__year').first();
+                let yearShown = false;
+
+                if (await monthEl.count() > 0) month = await monthEl.innerText();
+                if (await dayEl.count() > 0) day = await dayEl.innerText();
+                if (await yearEl.count() > 0) {
+                    const yText = await yearEl.innerText();
+                    const y = yText.replace(',', '').trim();
+                    if (/^\d{4}$/.test(y)) { year = y; yearShown = true; }
                 }
+                if (!yearShown && prevDate) year = prevDate.slice(0, 4);
+
+                const startsEl = page.locator('.sidebar_event_starts span').first();
+                if (await startsEl.count() > 0) {
+                    eventTime = await startsEl.innerText();
+                }
+
+                // Build the date directly. (The shared formatDate() ignores a year written as
+                // "Jan 2, 2027" because of the comma, and falls back to 2026.)
+                const gcMonths = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+                                   jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
+                const gcMonth = gcMonths[month.trim().toLowerCase().slice(0, 3)];
+                const gcDay = (day.match(/\d{1,2}/) || [''])[0];
+                let cleanDate = (gcMonth && gcDay) ? `${year}-${gcMonth}-${gcDay.padStart(2, '0')}` : 'TBA';
+                const cleanTime = formatTime(eventTime);
+
+                // Keep the list's order: if this date is before the previous event's, it's next year
+                if (/^\d{4}-\d{2}-\d{2}$/.test(cleanDate) && prevDate && cleanDate < prevDate) {
+                    let y = parseInt(cleanDate.slice(0, 4), 10);
+                    let fixed = cleanDate;
+                    while (fixed < prevDate && y < parseInt(prevDate.slice(0, 4), 10) + 2) {
+                        y++;
+                        fixed = `${y}${cleanDate.slice(4)}`;
+                    }
+                    console.log(`   ↪︎ Grand Casino: ${title.replace(/\s+/g, ' ').trim()} read as ${cleanDate}, out of list order -> ${fixed}`);
+                    cleanDate = fixed;
+                }
+                if (/^\d{4}-\d{2}-\d{2}$/.test(cleanDate)) prevDate = cleanDate;
+
+                if (/^\d{4}-\d{2}-\d{2}$/.test(cleanDate)) {
+                    const [cy, cm, cd] = cleanDate.split('-').map(Number);
+                    if (new Date(cy, cm - 1, cd) < today) continue;
+                }
+
+                let eventType = 'Concert';
+                const t = title.toLowerCase();
+                if (t.includes('wild') || t.includes('nhl') || t.includes('vs')) eventType = 'NHL';
+                else if (t.includes('pwhl')) eventType = 'PWHL';
+
+                const cleanTitle = title.replace(/\s+/g, ' ').trim();
+                const dedupeKey = `${cleanDate}-${cleanTitle}`;
+
+                if (seen.has(dedupeKey)) continue;
+                seen.add(dedupeKey);
+
+                venueData.push({
+                    venue: 'Grand Casino Arena',
+                    title: cleanTitle,
+                    date: cleanDate,
+                    time: cleanTime,
+                    type: eventType
+                });
+
+                console.log(`✅ Kept: ${cleanTitle} on ${cleanDate} (${cleanTime}) [${eventType}]`);
             } catch (err) {
-                console.log(`   ⚠️ Skipped ${url}: ${err.message}`);
+                console.log(`Grand Casino subpage failed: ${err.message.substring(0, 45)}`);
             }
         }
 
-        console.log(`🏁 Angel of the Winds: ${venueData.length} rows.`);
-    } catch (err) {
-        console.error('❌ Angel of the Winds failed:', err.message);
+    } catch (e) {
+        console.log(`Grand Casino Arena failed: ${e.message}`);
     } finally {
         await page.close();
-        await context.close();
     }
-
     return venueData;
 }
 
-// =========================================================================
-// FIRST HORIZON COLISEUM (Greensboro Coliseum Complex)
-// List page -> scroll to the bottom (and click "More Events" if it shows) ->
-// open each event's detail page -> keep only Venue = "First Horizon Coliseum".
-// Times on the site are already local (ET), so no time zone conversion.
-// =========================================================================
-
-const FHC_LIST_URL = 'https://www.gsocomplex.com/events/all';
-
-function categorizeFHC(title) {
-    const t = (title || '').toLowerCase();
-
-    // Greensboro Gargoyles = ECHL hockey
-    if (t.includes('greensboro gargoyles') || t.includes('gargoyles')) return 'ECHL';
-
-    // Basketball: women's first, because "women's" also contains "men's"
-    if (/women'?s basketball|\bwbb\b/.test(t)) return 'NCAA WB';
-    if (/\bmen'?s basketball|\bmbb\b/.test(t)) return 'NCAA MB';
-    if (/\bbasketball\b/.test(t) && /\b(college|university|state|vs\.?)\b/.test(t)) return 'NCAA MB';
-
-    // Concerts (whole words)
-    const concertWords = [
-        'festival', 'music', 'r&b', 'disney', 'concert', 'tour', 'live', 'band', 'symphony',
-        'orchestra', 'jazz', 'gospel', 'hip hop', 'rap', 'country', 'rock', 'singer', 'tribute'
-    ];
-    if (concertWords.some(w => new RegExp(`(^|[^a-z])${w.replace(/[&]/g, '\\$&')}([^a-z]|$)`).test(t))) return 'Concert';
-
-    return 'Other';
-}
-
-// Runs inside the detail page
-function extractFHCDetail() {
-    const clean = s => (s || '').replace(/\s+/g, ' ').trim();
-    const sidebarText = (sel) => {
-        const li = document.querySelector(`.eventDetailList ${sel}`);
-        if (!li) return '';
-        const clone = li.cloneNode(true);
-        clone.querySelectorAll('.label, svg').forEach(el => el.remove());
-        return clean(clone.textContent);
-    };
-
-    const title = clean(document.querySelector('h1.title')?.textContent);
-    const dateText = sidebarText('.sidebar_event_date');
-    const startsText = sidebarText('.sidebar_event_starts');
-    const venueText = sidebarText('.sidebar_event_venue');
-
-    // Keep line breaks in the description so "Women's Game - 5:30 p.m." stays on its own line
-    const descEl = document.querySelector('.event_description .description_inner, .event_description');
-    let description = '';
-    if (descEl) {
-        const tmp = document.createElement('div');
-        tmp.innerHTML = descEl.innerHTML.replace(/<br\s*\/?>|<\/p>|<\/div>|<\/li>/gi, '\n');
-        description = tmp.textContent || '';
-    }
-
-    const showings = Array.from(document.querySelectorAll('ul.list li.listItem')).map(li => ({
-        dateText: clean(li.querySelector('.showings_date')?.textContent),
-        timeText: clean(li.querySelector('.time')?.textContent),
-        ticketTitle: clean(li.querySelector('a.tickets')?.getAttribute('title'))
-    }));
-
-    return { title, dateText, startsText, venueText, description, showings };
-}
-
-// "Women's Game - 5:30 p.m." / "Men's Game - 7:30 p.m." -> [{type:'NCAA WB', time:'5:30PM'}, {type:'NCAA MB', time:'7:30PM'}]
-function parseGenderedGameTimesFHC(description) {
-    const games = [];
-    for (const line of (description || '').split(/\n|<br\s*\/?>/i)) {
-        const timeMatch = line.match(/\d{1,2}(?::\d{2})?\s*[ap]\.?\s*m\.?/i);
-        if (!timeMatch) continue;
-        if (/women/i.test(line)) games.push({ type: 'NCAA WB', time: formatTimeAOTW(timeMatch[0].replace(/\s+/g, '')) });
-        else if (/\bmen'?s?\b/i.test(line)) games.push({ type: 'NCAA MB', time: formatTimeAOTW(timeMatch[0].replace(/\s+/g, '')) });
-    }
-    return games;
-}
-
-async function scrapeFirstHorizon(browser) {
-    const context = await browser.newContext({
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-        viewport: { width: 1366, height: 900 }
-    });
-    const page = await context.newPage();
+// KFC Yum Center Main Function
+async function scrapeKFC(browser) {
+    const page = await browser.newPage();
     const venueData = [];
-    const seen = new Set();
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const isPast = (iso) => {
-        const [y, m, d] = iso.split('-').map(Number);
-        return new Date(y, m - 1, d) < today;
-    };
-    const addRow = (title, date, time, type) => {
-        if (date !== 'TBA' && isPast(date)) return;
-        const key = `${date}|${time}|${title}|${type}`;
-        if (seen.has(key)) return;
-        seen.add(key);
-        venueData.push({ venue: 'First Horizon Coliseum', title, date, time, type });
-        console.log(`✅ Kept: ${title} on ${date} (${time}) [${type}]`);
-    };
-
     try {
-        console.log('\n🚀 Scraping First Horizon Coliseum (gsocomplex.com)...');
-        await page.goto(FHC_LIST_URL, { waitUntil: 'domcontentloaded', timeout: 45000 });
+        await page.goto('https://www.kfcyumcenter.com/events', { waitUntil: 'domcontentloaded', timeout: 30000 });
+        console.log(`\nScraping KFC Yum Center...`);
 
         try {
-            const cookieBtn = page.locator('#onetrust-accept-btn-handler, button:has-text("Accept")').first();
-            if (await cookieBtn.isVisible({ timeout: 3000 })) await cookieBtn.click();
-        } catch (e) {}
-
-        const linkSelector = 'a[href*="/events/detail/"]';
-        await page.waitForSelector(linkSelector, { timeout: 20000 });
-
-        // ---- Scroll all the way down until no new events appear.
-        // If a "More Events" button shows up, click it too.
-        let stableRounds = 0;
-        let lastCount = await page.locator(linkSelector).count();
-        for (let i = 0; i < 200 && stableRounds < 4; i++) {
-            await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-            await page.waitForTimeout(1200);
-
-            const clicked = await page.evaluate(() => {
-                const btn = document.querySelector('#loadMoreEvents');
-                if (btn && btn.offsetParent !== null) { btn.click(); return true; }
-                return false;
-            });
-            if (clicked) await page.waitForTimeout(1500);
-
-            const count = await page.locator(linkSelector).count();
-            if (count > lastCount) {
-                console.log(`   ↪︎ Loaded more events: ${lastCount} -> ${count} links`);
-                lastCount = count;
-                stableRounds = 0;
-            } else {
-                stableRounds++;
-            }
-        }
-        console.log('   ↪︎ Reached the bottom of the event list.');
-
-        const detailUrls = await page.evaluate(sel => {
-            const urls = Array.from(document.querySelectorAll(sel)).map(a => a.href.split('#')[0]);
-            return Array.from(new Set(urls));
-        }, linkSelector);
-        console.log(`📋 Found ${detailUrls.length} events across the complex.`);
-
-        let otherVenue = 0;
-
-        for (const url of detailUrls) {
-            try {
-                await gotoDetailWithRetry(page, url);
-
-                const d = await page.evaluate(extractFHCDetail);
-                if (!d.title) continue;
-
-                // Only events at First Horizon Coliseum
-                if (!/first horizon coliseum/i.test(d.venueText)) {
-                    otherVenue++;
-                    continue;
-                }
-
-                const title = d.title;
-                const baseType = categorizeFHC(title);
-
-                // ---- Build the list of (date, time) slots
-                const sidebarDays = parseDateRangeAOTW(d.dateText);
-                const sidebarYear = sidebarDays.length ? parseInt(sidebarDays[0].slice(0, 4), 10) : today.getFullYear();
-                const sidebarStartMonth = sidebarDays.length ? parseInt(sidebarDays[0].slice(5, 7), 10) : 1;
-                const slots = [];
-
-                if (d.showings.length > 0) {
-                    for (const s of d.showings) {
-                        let date = 'TBA';
-                        const fromTicket = s.ticketTitle.match(/([A-Za-z]{3,})\s+(\d{1,2}),?\s+(\d{4})/);
-                        if (fromTicket && AOTW_MONTHS[fromTicket[1].toLowerCase().slice(0, 3)]) {
-                            date = isoDateAOTW(fromTicket[3], AOTW_MONTHS[fromTicket[1].toLowerCase().slice(0, 3)], fromTicket[2]);
-                        } else {
-                            const md = s.dateText.match(/([A-Za-z]{3,})\s+(\d{1,2})/g);
-                            const last = md ? md[md.length - 1].match(/([A-Za-z]{3,})\s+(\d{1,2})/) : null;
-                            const month = last ? AOTW_MONTHS[last[1].toLowerCase().slice(0, 3)] : null;
-                            if (month) {
-                                const year = month < sidebarStartMonth ? sidebarYear + 1 : sidebarYear;
-                                date = isoDateAOTW(year, month, last[2]);
-                            }
-                        }
-                        slots.push({ date, time: formatTimeAOTW(s.timeText || s.ticketTitle) });
-                    }
-                } else if (sidebarDays.length > 0) {
-                    const time = formatTimeAOTW(d.startsText);
-                    for (const day of sidebarDays) slots.push({ date: day, time });
-                } else {
-                    console.log(`   ⚠️ No date found for "${title}" (${url})`);
-                    continue;
-                }
-
-                // ---- Doubleheaders: "Women's Game - 5:30 p.m." / "Men's Game - 7:30 p.m."
-                const genderedGames = /basketball/i.test(title) || baseType.startsWith('NCAA')
-                    ? parseGenderedGameTimesFHC(d.description)
-                    : [];
-
-                for (const slot of slots) {
-                    if (genderedGames.length > 0) {
-                        for (const g of genderedGames) addRow(title, slot.date, g.time, g.type);
-                    } else {
-                        addRow(title, slot.date, slot.time, baseType);
-                    }
-                }
-            } catch (err) {
-                console.log(`   ⚠️ Skipped ${url}: ${err.message}`);
-            }
-        }
-
-        console.log(`🏁 First Horizon Coliseum: ${venueData.length} rows (${otherVenue} events at other complex venues skipped).`);
-    } catch (err) {
-        console.error('❌ First Horizon Coliseum failed:', err.message);
-    } finally {
-        await page.close();
-        await context.close();
-    }
-
-    return venueData;
-}
-
-// =========================================================================
-// EAGLEBANK ARENA (Fairfax, VA)
-// List page -> click "More Events" until the button is gone -> read each card.
-// Single-date cards are read straight from the grid; date ranges
-// (e.g. "Apr 29 - May 2, 2027") open the detail page and read every showing.
-// Times on the site are already local (ET), so no time zone conversion.
-// =========================================================================
-
-const EBA_LIST_URL = 'https://www.eaglebankarena.com/events';
-
-function categorizeEBA(title) {
-    const t = (title || '').toLowerCase();
-
-    // George Mason: women's team first, since "George Mason" alone means the men's team
-    if (/george mason women|george mason wbb/.test(t) || /women'?s basketball/.test(t)) return 'NCAA WB';
-    if (t.includes('george mason') || /\bmen'?s basketball/.test(t)) return 'NCAA MB';
-
-    // Concerts (whole words)
-    const concertWords = [
-        'concert', 'tour', 'music', 'festival', 'live', 'band', 'symphony', 'orchestra', 'r&b',
-        'jazz', 'gospel', 'hip hop', 'rap', 'country', 'rock', 'singer', 'tribute', 'disney'
-    ];
-    if (concertWords.some(w => new RegExp(`(^|[^a-z])${w.replace(/[&]/g, '\\$&')}([^a-z]|$)`).test(t))) return 'Concert';
-
-    return 'Other';
-}
-
-// Runs in the list page: one entry per event card
-function extractEBACards() {
-    const clean = s => (s || '').replace(/\s+/g, ' ').trim();
-    const cards = [];
-    document.querySelectorAll('h3.title a[href*="/events/detail/"]').forEach(a => {
-        // Climb to the card that holds this title and its date box (and no other titles)
-        let card = a.closest('h3.title');
-        while (card && card.parentElement &&
-               !(card.querySelector('.date') && card.querySelectorAll('h3.title').length === 1)) {
-            if (card.parentElement.querySelectorAll('h3.title').length > 1) break;
-            card = card.parentElement;
-        }
-        const dateBox = card ? card.querySelector('.date') : null;
-
-        let dateText = '';
-        if (dateBox) {
-            const clone = dateBox.cloneNode(true);
-            clone.querySelectorAll('.time').forEach(el => el.remove());
-            dateText = clean(clone.textContent);
-        }
-
-        cards.push({
-            url: a.href.split('#')[0],
-            title: clean(a.textContent),
-            dateText,
-            isRange: !!(dateBox && dateBox.querySelector('.m-date__rangeFirst, .m-date__separator')),
-            startText: clean(card?.querySelector('.meta .start')?.textContent) || clean(dateBox?.querySelector('.time')?.textContent)
-        });
-    });
-    return cards;
-}
-
-// Runs in the detail page: every showing (visible or under "More Showings")
-function extractEBAShowings() {
-    const clean = s => (s || '').replace(/\s+/g, ' ').trim();
-    const title = clean(document.querySelector('h1.title')?.textContent);
-    const items = document.querySelectorAll('.event_showings .listItem, ul.list li.listItem');
-    const showings = Array.from(items).map(li => ({
-        dateText: clean(li.querySelector('.showings_date')?.textContent),
-        timeText: clean(li.querySelector('.time')?.textContent),
-        // "Add to Calendar for May  1 2027 at 10:30 AM" / "Buy Tickets for ..." (both carry the year)
-        icalTitle: clean(li.querySelector('a.ical')?.getAttribute('title')),
-        ticketTitle: clean(li.querySelector('a.tickets')?.getAttribute('title'))
-    }));
-    return { title, showings };
-}
-
-async function scrapeEagleBank(browser) {
-    const context = await browser.newContext({
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-        viewport: { width: 1366, height: 900 }
-    });
-    const page = await context.newPage();
-    const venueData = [];
-    const seen = new Set();
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const isPast = (iso) => {
-        const [y, m, d] = iso.split('-').map(Number);
-        return new Date(y, m - 1, d) < today;
-    };
-    const addRow = (title, date, time, type) => {
-        if (date !== 'TBA' && isPast(date)) return;
-        const key = `${date}|${time}|${title}`;
-        if (seen.has(key)) return;
-        seen.add(key);
-        venueData.push({ venue: 'EagleBank Arena', title, date, time, type });
-        console.log(`✅ Kept: ${title} on ${date} (${time}) [${type}]`);
-    };
-
-    try {
-        console.log('\n🚀 Scraping EagleBank Arena...');
-        await page.goto(EBA_LIST_URL, { waitUntil: 'domcontentloaded', timeout: 45000 });
-
-        try {
-            const cookieBtn = page.locator('#onetrust-accept-btn-handler, button:has-text("Accept")').first();
-            if (await cookieBtn.isVisible({ timeout: 3000 })) await cookieBtn.click();
-        } catch (e) {}
-
-        const linkSelector = 'h3.title a[href*="/events/detail/"]';
-        await page.waitForSelector(linkSelector, { timeout: 20000 });
-
-        // ---- Click "More Events" until the button is gone
-        const buttonPresent = () => page.evaluate(() => {
-            const btn = document.querySelector('#loadMoreEvents');
-            if (!btn) return false;
-            const style = window.getComputedStyle(btn);
-            return style.display !== 'none' && style.visibility !== 'hidden' && btn.offsetParent !== null;
-        });
-        let failedClicks = 0;
-        for (let i = 0; i < 150; i++) {
-            let present = await buttonPresent();
-            for (let w = 0; !present && w < 6; w++) {
-                await page.waitForTimeout(500);
-                present = await buttonPresent();
-            }
-            if (!present) {
-                console.log('   ↪︎ "More Events" button is gone, reached the end of the list.');
-                break;
-            }
-            const before = await page.locator(linkSelector).count();
-            await page.locator('#loadMoreEvents').scrollIntoViewIfNeeded().catch(() => {});
-            await page.evaluate(() => document.querySelector('#loadMoreEvents')?.click());
-            try {
-                await page.waitForFunction(
-                    ([sel, n]) => document.querySelectorAll(sel).length > n,
-                    [linkSelector, before],
-                    { timeout: 15000 }
-                );
-                failedClicks = 0;
-                console.log(`   ↪︎ More Events: ${before} -> ${await page.locator(linkSelector).count()} events`);
-            } catch {
-                failedClicks++;
-                console.log(`   ↪︎ More Events click added nothing (attempt ${failedClicks}/3)`);
-                if (failedClicks >= 3) break;
-            }
-            await page.waitForTimeout(800);
-        }
-
-        // ---- Read the grid
-        const allCards = await page.evaluate(extractEBACards);
-        const cards = [];
-        const seenUrls = new Set();
-        for (const c of allCards) {
-            if (seenUrls.has(c.url)) continue;
-            seenUrls.add(c.url);
-            cards.push(c);
-        }
-        const rangeCards = cards.filter(c => c.isRange);
-        console.log(`📋 Found ${cards.length} EagleBank events (${rangeCards.length} with multiple dates).`);
-
-        // Single-date events: straight from the card
-        for (const c of cards.filter(c => !c.isRange)) {
-            const days = parseDateRangeAOTW(c.dateText);
-            if (days.length === 0) {
-                console.log(`   ⚠️ No date on card for "${c.title}"`);
-                continue;
-            }
-            addRow(c.title, days[0], formatTimeAOTW(c.startText), categorizeEBA(c.title));
-        }
-
-        // Multi-date events: open "More Info" and read every showing
-        for (const c of rangeCards) {
-            try {
-                await gotoDetailWithRetry(page, c.url);
-                const d = await page.evaluate(extractEBAShowings);
-                const title = d.title || c.title;
-                const type = categorizeEBA(title);
-
-                if (d.showings.length === 0) {
-                    // No showings list: one row per day of the range, with the card's time
-                    const days = parseDateRangeAOTW(c.dateText);
-                    for (const day of days) addRow(title, day, formatTimeAOTW(c.startText), type);
-                    continue;
-                }
-
-                const rangeDays = parseDateRangeAOTW(c.dateText);
-                const rangeYear = rangeDays.length ? parseInt(rangeDays[0].slice(0, 4), 10) : today.getFullYear();
-                const rangeStartMonth = rangeDays.length ? parseInt(rangeDays[0].slice(5, 7), 10) : 1;
-
-                for (const s of d.showings) {
-                    let date = 'TBA';
-                    const withYear = `${s.icalTitle} ${s.ticketTitle}`.match(/([A-Za-z]{3,})\s+(\d{1,2}),?\s+(\d{4})/);
-                    if (withYear && AOTW_MONTHS[withYear[1].toLowerCase().slice(0, 3)]) {
-                        date = isoDateAOTW(withYear[3], AOTW_MONTHS[withYear[1].toLowerCase().slice(0, 3)], withYear[2]);
-                    } else {
-                        const md = s.dateText.match(/([A-Za-z]{3,})\s+(\d{1,2})/);
-                        const month = md ? AOTW_MONTHS[md[1].toLowerCase().slice(0, 3)] : null;
-                        if (month) {
-                            const year = month < rangeStartMonth ? rangeYear + 1 : rangeYear;
-                            date = isoDateAOTW(year, month, md[2]);
-                        }
-                    }
-                    const time = formatTimeAOTW(s.timeText || s.icalTitle);
-                    addRow(title, date, time, type);
-                }
-            } catch (err) {
-                console.log(`   ⚠️ Skipped ${c.url}: ${err.message}`);
-            }
-        }
-
-        console.log(`🏁 EagleBank Arena: ${venueData.length} rows.`);
-    } catch (err) {
-        console.error('❌ EagleBank Arena failed:', err.message);
-    } finally {
-        await page.close();
-        await context.close();
-    }
-
-    return venueData;
-}
-
-// =========================================================================
-// TEXAS A&M - REED ARENA (Ticketmaster)
-// Venue page -> click "More Events" until it disappears -> read every event.
-// Each event's "Find Tickets" link carries hidden text like
-//   "Texas A&M Aggies Womens Basketball vs. ... , 11/5/26, 8:00 PM"
-// which has the title, date and time together. Ticketmaster's class names
-// (sc-xxxx) change often, so the scraper relies on data-testid and that text.
-// Times on the page are already local (CT), so no time zone conversion.
-// =========================================================================
-
-const REED_URL = 'https://www.ticketmaster.com/reed-arena-tickets-college-station/venue/475425';
-
-function categorizeReed(title) {
-    const t = (title || '').toLowerCase().replace(/[’']/g, '');
-
-    if (/womens? basketball|\bwbb\b/.test(t)) return 'NCAA WB';
-    if (/volleyball/.test(t)) return 'NCAA WVB';
-    if (/mens basketball|\bmbb\b/.test(t) || /\bbasketball\b/.test(t)) return 'NCAA MB';
-
-    const concertWords = [
-        'concert', 'tour', 'music', 'festival', 'live', 'band', 'symphony', 'orchestra', 'r&b',
-        'jazz', 'gospel', 'hip hop', 'rap', 'country', 'rock', 'singer', 'tribute'
-    ];
-    if (concertWords.some(w => new RegExp(`(^|[^a-z])${w.replace(/[&]/g, '\\$&')}([^a-z]|$)`).test(t))) return 'Concert';
-
-    return 'Other';
-}
-
-// Runs in the Ticketmaster page: one entry per "Find Tickets" link
-function extractReedEvents() {
-    const clean = s => (s || '').replace(/\s+/g, ' ').trim();
-    return Array.from(document.querySelectorAll('a[data-testid="event-list-link"]')).map(a => {
-        const hidden = a.querySelector('[class*="VisuallyHidden"]');
-        return {
-            href: a.href,
-            label: clean(hidden ? hidden.textContent : a.textContent)
-        };
-    });
-}
-
-// "Title, 11/5/26, 8:00 PM" -> { title, date: '2026-11-05', time: '8:00PM' }
-function parseReedLabel(label) {
-    const text = (label || '').replace(/^(Find|See|Buy)\s+Tickets\s*/i, '').trim();
-    const m = text.match(/^(.*?),\s*(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:,\s*(.*))?$/);
-    if (!m) return { title: text, date: 'TBA', time: 'TBA' };
-    const year = m[4].length === 2 ? `20${m[4]}` : m[4];
-    return {
-        title: m[1].trim(),
-        date: isoDateAOTW(year, parseInt(m[2], 10), parseInt(m[3], 10)),
-        // Ticketmaster uses 12:00 AM as a placeholder for "time not announced"
-        time: (formatTimeAOTW(m[5] || '') === '12:00AM') ? 'TBA' : formatTimeAOTW(m[5] || '')
-    };
-}
-
-async function scrapeReedArena(browser) {
-    const context = await browser.newContext({
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-        viewport: { width: 1366, height: 900 }
-    });
-    const page = await context.newPage();
-    const venueData = [];
-    const seen = new Set();
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    try {
-        console.log('\n🚀 Scraping Texas A&M - Reed Arena (Ticketmaster)...');
-        await page.goto(REED_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
-
-        try {
-            const cookieBtn = page.locator('#onetrust-accept-btn-handler, button:has-text("Accept")').first();
-            if (await cookieBtn.isVisible({ timeout: 4000 })) await cookieBtn.click();
-        } catch (e) {}
-
-        const linkSelector = 'a[data-testid="event-list-link"]';
-        try {
-            await page.waitForSelector(linkSelector, { timeout: 30000 });
-        } catch (e) {
-            await page.screenshot({ path: 'reed_debug.png', fullPage: true }).catch(() => {});
-            console.log(`   ⚠️ No events appeared (page title: "${await page.title()}"). Saved reed_debug.png`);
-            throw e;
-        }
-
-        // ---- Click "More Events" until it disappears
-        const moreBtn = page.locator('button').filter({ hasText: /^\s*More Events\s*$/i }).first();
-        let failedClicks = 0;
-        for (let i = 0; i < 100; i++) {
-            let visible = await moreBtn.isVisible().catch(() => false);
-            for (let w = 0; !visible && w < 6; w++) {
-                await page.mouse.wheel(0, 3000);
-                await page.waitForTimeout(500);
-                visible = await moreBtn.isVisible().catch(() => false);
-            }
-            if (!visible) {
-                console.log('   ↪︎ "More Events" is gone, all events loaded.');
-                break;
-            }
-
-            const before = await page.locator(linkSelector).count();
-            await moreBtn.scrollIntoViewIfNeeded().catch(() => {});
-            await moreBtn.click({ timeout: 5000 }).catch(async () => {
-                await moreBtn.evaluate(el => el.click()).catch(() => {});
-            });
-
-            try {
-                await page.waitForFunction(
-                    ([sel, n]) => document.querySelectorAll(sel).length > n,
-                    [linkSelector, before],
-                    { timeout: 15000 }
-                );
-                failedClicks = 0;
-                console.log(`   ↪︎ More Events: ${before} -> ${await page.locator(linkSelector).count()} events`);
-            } catch {
-                failedClicks++;
-                console.log(`   ↪︎ More Events click added nothing (attempt ${failedClicks}/3)`);
-                if (failedClicks >= 3) break;
-            }
-            await page.waitForTimeout(800);
-        }
-
-        // ---- Read every event
-        const events = await page.evaluate(extractReedEvents);
-        console.log(`📋 Found ${events.length} Ticketmaster events for Reed Arena.`);
-
-        let skippedParking = 0;
-        for (const ev of events) {
-            const { title, date, time } = parseReedLabel(ev.label);
-            if (!title) continue;
-
-            // Parking passes are listed as separate "events"
-            if (/\bparking\b/i.test(title)) { skippedParking++; continue; }
-
-            if (date !== 'TBA') {
-                const [y, m, d] = date.split('-').map(Number);
-                if (new Date(y, m - 1, d) < today) continue;
-            }
-
-            const type = categorizeReed(title);
-            const key = `${date}|${time}|${title}`;
-            if (seen.has(key)) continue;
-            seen.add(key);
-
-            venueData.push({ venue: 'Texas A&M - Reed Arena', title, date, time, type });
-            console.log(`✅ Kept: ${title} on ${date} (${time}) [${type}]`);
-        }
-
-        console.log(`🏁 Reed Arena: ${venueData.length} rows${skippedParking ? ` (${skippedParking} parking listings skipped)` : ''}.`);
-    } catch (err) {
-        console.error('❌ Reed Arena failed:', err.message);
-    } finally {
-        await page.close();
-        await context.close();
-    }
-
-    return venueData;
-}
-
-// =========================================================================
-// UNM - THE PIT (Ticketmaster: Albuquerque sports listing)
-// The page lists ALL Albuquerque sports events, so only events whose venue is
-// "Albuquerque, NM The Pit (University Arena)" are kept.
-// Click "More Events" until it disappears, then read every "Find Tickets" link.
-// Each link has hidden text like:
-//   "New Mexico Lobos Mens Basketball vs. Arkansas Little Rock Trojans Mens Basketball,
-//    Albuquerque, NM The Pit (University Arena)11/10/26, 7:00 PM"
-// Times on the page are already local (MT), so no time zone conversion.
-// =========================================================================
-
-const PIT_URL = 'https://www.ticketmaster.com/discover/albuquerque?categoryId=KZFzniwnSyZfZ7v7nE';
-
-function categorizePit(title) {
-    const t = (title || '').toLowerCase().replace(/[’']/g, '');
-
-    if (/womens? basketball|\bwbb\b/.test(t)) return 'NCAA WB';
-    if (/volleyball/.test(t)) return 'NCAA WVB';
-    if (/mens basketball|\bmbb\b/.test(t) || /\bbasketball\b/.test(t)) return 'NCAA MB';
-
-    const concertWords = [
-        'concert', 'tour', 'music', 'festival', 'live', 'band', 'symphony', 'orchestra', 'r&b',
-        'jazz', 'gospel', 'hip hop', 'rap', 'country', 'rock', 'singer', 'tribute'
-    ];
-    if (concertWords.some(w => new RegExp(`(^|[^a-z])${w.replace(/[&]/g, '\\$&')}([^a-z]|$)`).test(t))) return 'Concert';
-
-    return 'Other';
-}
-
-// Runs in the Ticketmaster page: one entry per "Find Tickets" link, plus its row's text
-function extractPitEvents() {
-    const clean = s => (s || '').replace(/\s+/g, ' ').trim();
-    return Array.from(document.querySelectorAll('a[data-testid="event-list-link"]')).map(a => {
-        const hidden = a.querySelector('[class*="VisuallyHidden"]');
-        const row = a.closest('li') || a.parentElement?.parentElement || a;
-        return {
-            label: clean(hidden ? hidden.textContent : a.textContent),
-            rowText: clean(row.textContent)
-        };
-    });
-}
-
-// Splits "Title, Albuquerque, NM The Pit (University Arena)11/10/26, 7:00 PM"
-function parsePitLabel(label) {
-    const text = (label || '').replace(/^(Find|See|Buy)\s+Tickets\s*/i, '').trim();
-    const dm = text.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:,\s*(.*))?$/);
-
-    let before = dm ? text.slice(0, dm.index) : text;
-    before = before.replace(/[,\s]+$/, '');
-
-    // Title is everything before ", Albuquerque, NM" (or before any ", City, ST")
-    let title = before;
-    const cityIdx = before.search(/,\s*Albuquerque,\s*NM\b/i);
-    if (cityIdx >= 0) {
-        title = before.slice(0, cityIdx);
-    } else {
-        const generic = before.match(/^(.*?),\s*[A-Z][A-Za-z .'-]+,\s*[A-Z]{2}\b/);
-        if (generic) title = generic[1];
-    }
-
-    let date = 'TBA', time = 'TBA';
-    if (dm) {
-        const year = dm[3].length === 2 ? `20${dm[3]}` : dm[3];
-        date = isoDateAOTW(year, parseInt(dm[1], 10), parseInt(dm[2], 10));
-        time = formatTimeAOTW(dm[4] || '');
-        // Ticketmaster uses 12:00 AM as a placeholder for "time not announced"
-        if (time === '12:00AM') time = 'TBA';
-    }
-    return { title: title.trim(), venueText: before, date, time };
-}
-
-async function scrapeThePit(browser) {
-    const context = await browser.newContext({
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-        viewport: { width: 1366, height: 900 }
-    });
-    const page = await context.newPage();
-    const venueData = [];
-    const seen = new Set();
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    try {
-        console.log('\n🚀 Scraping UNM - The Pit (Ticketmaster Albuquerque sports)...');
-        await page.goto(PIT_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
-
-        try {
-            const cookieBtn = page.locator('#onetrust-accept-btn-handler, button:has-text("Accept")').first();
-            if (await cookieBtn.isVisible({ timeout: 4000 })) await cookieBtn.click();
-        } catch (e) {}
-
-        const linkSelector = 'a[data-testid="event-list-link"]';
-        try {
-            await page.waitForSelector(linkSelector, { timeout: 30000 });
-        } catch (e) {
-            await page.screenshot({ path: 'pit_debug.png', fullPage: true }).catch(() => {});
-            console.log(`   ⚠️ No events appeared (page title: "${await page.title()}"). Saved pit_debug.png`);
-            throw e;
-        }
-
-        // ---- Click "More Events" until it disappears
-        const moreBtn = page.locator('button').filter({ hasText: /^\s*More Events\s*$/i }).first();
-        let failedClicks = 0;
-        for (let i = 0; i < 100; i++) {
-            let visible = await moreBtn.isVisible().catch(() => false);
-            for (let w = 0; !visible && w < 6; w++) {
-                await page.mouse.wheel(0, 3000);
-                await page.waitForTimeout(500);
-                visible = await moreBtn.isVisible().catch(() => false);
-            }
-            if (!visible) {
-                console.log('   ↪︎ "More Events" is gone, all Albuquerque events loaded.');
-                break;
-            }
-
-            const before = await page.locator(linkSelector).count();
-            await moreBtn.scrollIntoViewIfNeeded().catch(() => {});
-            await moreBtn.click({ timeout: 5000 }).catch(async () => {
-                await moreBtn.evaluate(el => el.click()).catch(() => {});
-            });
-
-            try {
-                await page.waitForFunction(
-                    ([sel, n]) => document.querySelectorAll(sel).length > n,
-                    [linkSelector, before],
-                    { timeout: 15000 }
-                );
-                failedClicks = 0;
-                console.log(`   ↪︎ More Events: ${before} -> ${await page.locator(linkSelector).count()} events`);
-            } catch {
-                failedClicks++;
-                console.log(`   ↪︎ More Events click added nothing (attempt ${failedClicks}/3)`);
-                if (failedClicks >= 3) break;
-            }
-            await page.waitForTimeout(800);
-        }
-
-        // ---- Read every event, keep only The Pit
-        const events = await page.evaluate(extractPitEvents);
-        console.log(`📋 Found ${events.length} Albuquerque sports events on Ticketmaster.`);
-
-        const PIT_RE = /Albuquerque,\s*NM\s*The Pit \(University Arena\)/i;
-        let otherVenue = 0, skippedParking = 0;
-        for (const ev of events) {
-            const p = parsePitLabel(ev.label);
-            if (!p.title) continue;
-
-            const atPit = PIT_RE.test(ev.label) || PIT_RE.test(ev.rowText);
-            if (!atPit) { otherVenue++; continue; }
-            if (/\bparking\b/i.test(p.title)) { skippedParking++; continue; }
-
-            if (p.date !== 'TBA') {
-                const [y, m, d] = p.date.split('-').map(Number);
-                if (new Date(y, m - 1, d) < today) continue;
-            }
-
-            const type = categorizePit(p.title);
-            const key = `${p.date}|${p.time}|${p.title}`;
-            if (seen.has(key)) continue;
-            seen.add(key);
-
-            venueData.push({ venue: 'UNM - The Pit', title: p.title, date: p.date, time: p.time, type });
-            console.log(`✅ Kept: ${p.title} on ${p.date} (${p.time}) [${type}]`);
-        }
-
-        const notes = [`${otherVenue} at other Albuquerque venues skipped`];
-        if (skippedParking) notes.push(`${skippedParking} parking listings skipped`);
-        console.log(`🏁 The Pit: ${venueData.length} rows (${notes.join(', ')}).`);
-    } catch (err) {
-        console.error('❌ The Pit failed:', err.message);
-    } finally {
-        await page.close();
-        await context.close();
-    }
-
-    return venueData;
-}
-
-// =========================================================================
-// WICHITA STATE - KOCH ARENA (wichita.edu calendar, location 33 = Koch Arena)
-// The page is already filtered to Koch Arena. Each event:
-//   <time datetime="2026-11-04T06:30:00-06:00">6:30 p.m.</time> <span itemprop="name">Men's Basketball vs. CSUN</span>
-// The datetime's hour is NOT reliable (6:30 p.m. shows as 06:30), so the date comes
-// from datetime and the time from the visible text. Times are already local (CT).
-// =========================================================================
-
-const KOCH_URL = 'https://www.wichita.edu/calendar/index.php?com=location&lID=33';
-
-function categorizeCollegeArena(title) {
-    const t = (title || '').toLowerCase().replace(/[’']/g, '');
-
-    // Women's first, because "womens" also contains "mens"
-    if (/womens basketball|\bwbb\b/.test(t)) return 'NCAA WB';
-    if (/mens basketball|\bmbb\b/.test(t)) return 'NCAA MB';
-
-    const concertWords = [
-        'concert', 'tour', 'music', 'festival', 'live', 'band', 'symphony', 'orchestra', 'r&b',
-        'jazz', 'gospel', 'hip hop', 'rap', 'country', 'rock', 'singer', 'tribute'
-    ];
-    if (concertWords.some(w => new RegExp(`(^|[^a-z])${w.replace(/[&]/g, '\\$&')}([^a-z]|$)`).test(t))) return 'Concert';
-
-    return 'Other';
-}
-
-// Runs in the wichita.edu page
-function extractKochEvents() {
-    const clean = s => (s || '').replace(/\s+/g, ' ').trim();
-    return Array.from(document.querySelectorAll('li.wsu_cal_event_li')).map(li => {
-        const timeEl = li.querySelector('time[itemprop="startDate"], time');
-        return {
-            title: clean(li.querySelector('[itemprop="name"]')?.textContent || li.querySelector('a')?.textContent),
-            datetime: timeEl ? (timeEl.getAttribute('datetime') || '') : '',
-            timeText: clean(timeEl?.textContent),
-            href: li.querySelector('a[href]')?.href || ''
-        };
-    });
-}
-
-async function scrapeKochArena(browser) {
-    const context = await browser.newContext({
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-        viewport: { width: 1366, height: 900 }
-    });
-    const page = await context.newPage();
-    const venueData = [];
-    const seen = new Set();
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    try {
-        console.log('\n🚀 Scraping Wichita - Koch Arena (wichita.edu calendar)...');
-        await page.goto(KOCH_URL, { waitUntil: 'domcontentloaded', timeout: 45000 });
-
-        try {
-            await page.waitForSelector('li.wsu_cal_event_li', { timeout: 20000 });
-        } catch (e) {
-            await page.screenshot({ path: 'koch_debug.png', fullPage: true }).catch(() => {});
-            console.log(`   ⚠️ No events appeared (page title: "${await page.title()}"). Saved koch_debug.png`);
-            throw e;
-        }
-
-        const events = await page.evaluate(extractKochEvents);
-        console.log(`📋 Found ${events.length} Koch Arena calendar entries.`);
-
-        for (const ev of events) {
-            if (!ev.title) continue;
-            if (/\bparking\b/i.test(ev.title)) continue;
-
-            const dm = ev.datetime.match(/^(\d{4})-(\d{2})-(\d{2})/);
-            const date = dm ? `${dm[1]}-${dm[2]}-${dm[3]}` : 'TBA';
-            if (date !== 'TBA') {
-                const [y, m, d] = date.split('-').map(Number);
-                if (new Date(y, m - 1, d) < today) continue;
-            }
-
-            // "6:30 p.m." -> "6:30PM"; "All day" or no time -> TBA
-            const time = formatTimeAOTW(ev.timeText.replace(/\s+/g, ''));
-            const type = categorizeCollegeArena(ev.title);
-
-            const key = `${date}|${time}|${ev.title}`;
-            if (seen.has(key)) continue;
-            seen.add(key);
-
-            venueData.push({ venue: 'Wichita - Koch Arena', title: ev.title, date, time, type });
-            console.log(`✅ Kept: ${ev.title} on ${date} (${time}) [${type}]`);
-        }
-
-        console.log(`🏁 Koch Arena: ${venueData.length} rows.`);
-    } catch (err) {
-        console.error('❌ Koch Arena failed:', err.message);
-    } finally {
-        await page.close();
-        await context.close();
-    }
-
-    return venueData;
-}
-
-// =========================================================================
-// WSU - BEASLEY COLISEUM (Vivid Seats venue page)
-// eVenue blocks automated browsers ("Access to this page has been denied"),
-// so this reads Vivid Seats instead. Each card has:
-//   title  "Idaho Vandals at Washington State Cougars Womens Basketball"
-//   date   "Mon Nov 9" • time "11:00AM"
-//   venue  "Beasley Coliseum" • "Pullman, WA"
-// Vivid Seats class names are generated (mui-xxxx), so the scraper finds cards by
-// their title element and reads the date/time/venue by text pattern.
-// Times on the page are already local (PT), so no time zone conversion.
-// =========================================================================
-
-const BEASLEY_URL = 'https://www.vividseats.com/beasley-coliseum-tickets/venue/163';
-
-// Runs in the Vivid Seats page: one entry per event card
-function extractBeasleyCards() {
-    const clean = s => (s || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
-    const titleSel = '[class*="titleTruncate"]';
-    // "Mon Nov 9" or, for next year's events, "Sun Feb 7, 2027"
-    const DATE_RE = /^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*\.?\s+([A-Z][a-z]{2,})\.?\s+(\d{1,2})(?:,\s*(\d{4}))?$/;
-
-    return Array.from(document.querySelectorAll(titleSel)).map(titleEl => {
-        // Climb to the card: the ancestor that has a date span and only this one title
-        let card = titleEl;
-        const hasDate = el => Array.from(el.querySelectorAll('span')).some(s => DATE_RE.test(clean(s.textContent)));
-        while (card.parentElement && !hasDate(card)) {
-            if (card.parentElement.querySelectorAll(titleSel).length > 1) break;
-            card = card.parentElement;
-        }
-
-        const spans = Array.from(card.querySelectorAll('span')).map(s => clean(s.textContent)).filter(Boolean);
-        const dateText = spans.find(t => DATE_RE.test(t)) || '';
-        const timeText = spans.find(t => /^\d{1,2}:\d{2}\s*[AP]M$/i.test(t) || /^(TBD|TBA)$/i.test(t)) || '';
-        const cardText = clean(card.textContent);
-
-        return {
-            title: clean(titleEl.textContent),
-            dateText,
-            timeText,
-            atBeasley: /Beasley Coliseum/i.test(cardText),
-            cardText
-        };
-    });
-}
-
-// "Mon Nov 9" has no year: this year, or next year if that date already passed
-function vividDate(dateText) {
-    // "Mon Nov 9" or "Sun Feb 7, 2027"
-    const m = (dateText || '').match(/([A-Z][a-z]{2,})\.?\s+(\d{1,2})(?:,\s*(\d{4}))?$/);
-    if (!m) return 'TBA';
-    const mo = AOTW_MONTHS[m[1].toLowerCase().slice(0, 3)];
-    if (!mo) return 'TBA';
-    const day = parseInt(m[2], 10);
-    if (m[3]) return isoDateAOTW(m[3], mo, day);   // year shown on the card
-
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    let year = today.getFullYear();
-    if (new Date(year, mo - 1, day) < today) year++;
-    return isoDateAOTW(year, mo, day);
-}
-
-async function scrapeBeasley(browser) {
-    const context = await browser.newContext({
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-        viewport: { width: 1366, height: 900 }
-    });
-    const page = await context.newPage();
-    const venueData = [];
-    const seen = new Set();
-
-    try {
-        console.log('\n🚀 Scraping WSU - Beasley Coliseum (Vivid Seats)...');
-        await page.goto(BEASLEY_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
-
-        try {
-            const cookieBtn = page.locator('#onetrust-accept-btn-handler, button:has-text("Accept")').first();
-            if (await cookieBtn.isVisible({ timeout: 4000 })) await cookieBtn.click();
-        } catch (e) {}
-
-        const titleSel = '[class*="titleTruncate"]';
-        try {
-            await page.waitForSelector(titleSel, { state: 'attached', timeout: 45000 });
-        } catch (e) {
-            await page.screenshot({ path: 'beasley_debug.png', fullPage: true }).catch(() => {});
-            console.log(`   ⚠️ No events appeared (page title: "${await page.title()}"). Saved beasley_debug.png`);
-            throw e;
-        }
-
-        // Scroll to the bottom and click any "Load more"/"Show more" until nothing new appears
-        let lastCount = await page.locator(titleSel).count();
-        let stable = 0;
-        for (let i = 0; i < 60 && stable < 3; i++) {
-            await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-            await page.waitForTimeout(1200);
-            const more = page.locator('button').filter({ hasText: /^\s*(Load|Show|See|View) more/i }).first();
-            if (await more.isVisible().catch(() => false)) {
-                await more.click().catch(() => {});
+            const loadMoreBtn = page.locator('#loadMoreEvents');
+            while (await loadMoreBtn.isVisible()) {
+                await loadMoreBtn.scrollIntoViewIfNeeded();
+                await loadMoreBtn.click();
                 await page.waitForTimeout(1500);
             }
-            const count = await page.locator(titleSel).count();
-            if (count > lastCount) {
-                console.log(`   ↪︎ Loaded more: ${lastCount} -> ${count} events`);
-                lastCount = count; stable = 0;
-            } else {
-                stable++;
-            }
+        } catch (e) {}
+
+        const eventLinks = await page.locator('h3.title a').all();
+        const urlsToVisit = [];
+
+        for (const link of eventLinks) {
+            const href = await link.getAttribute('href');
+            if (href) urlsToVisit.push(href.startsWith('http') ? href : `https://www.kfcyumcenter.com${href}`);
         }
+        const uniqueUrls = [...new Set(urlsToVisit)].filter(url => url.includes('/events/detail/'));
+        console.log(`Found ${uniqueUrls.length} unique KFC events. Scraping...`);
 
-        const cards = await page.evaluate(extractBeasleyCards);
-        console.log(`📋 Found ${cards.length} Vivid Seats listings for Beasley Coliseum.`);
+        for (const detailUrl of uniqueUrls) {
+            try {
+                await page.goto(detailUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
 
-        let otherVenue = 0, parking = 0;
-        for (const c of cards) {
-            if (!c.title) continue;
-            if (!c.atBeasley) { otherVenue++; continue; }
-            if (/\bparking\b/i.test(c.title)) { parking++; continue; }
+                const titleLoc = page.locator('h1.title, h1').first();
+                const eventTitle = (await titleLoc.count() > 0) ? await titleLoc.innerText() : "Event";
 
-            const date = vividDate(c.dateText);
-            const time = formatTimeAOTW(c.timeText);   // "11:00AM"; TBD -> TBA
-            const type = categorizeCollegeArena(c.title);
+                try {
+                    const moreInfoBtn = page.locator('button.read-more');
+                    if (await moreInfoBtn.isVisible()) {
+                        await moreInfoBtn.click();
+                        await page.waitForTimeout(300);
+                    }
+                } catch (e) {}
 
-            const key = `${date}|${time}|${c.title}`;
-            if (seen.has(key)) continue;
-            seen.add(key);
+                const descLoc = page.locator('.description_inner');
+                const eventDescription = (await descLoc.count() > 0) ? await descLoc.textContent() : "";
+                const eventType = categorizeKFC(eventTitle, eventDescription);
 
-            venueData.push({ venue: 'WSU - Beasley Coliseum', title: c.title, date, time, type });
-            console.log(`✅ Kept: ${c.title} on ${date} (${time}) [${type}]`);
+                const showtimeItems = await page.locator('ul.list li.listItem, .showings_list li').all();
+
+                if (showtimeItems.length === 0) {
+                    const fallbackDateLoc = page.locator('.showings_date, .m-date');
+                    if (await fallbackDateLoc.count() > 0) {
+                        const rawText = await fallbackDateLoc.innerText();
+                        const { title, date, time } = normalizeData(rawText, eventTitle);
+                        venueData.push({
+                            venue: 'Louisville - KFC Yum! Center',
+                            title: title,
+                            date: formatDate(date),
+                            time: formatTime(time),
+                            type: eventType
+                        });
+                    }
+                    continue;
+                }
+
+                for (const show of showtimeItems) {
+                    const mLoc = show.locator('.m-date__month');
+                    const dLoc = show.locator('.m-date__day');
+                    const tLoc = show.locator('.time.cell, .time');
+
+                    const month = (await mLoc.count() > 0) ? await mLoc.innerText() : "";
+                    const day = (await dLoc.count() > 0) ? await dLoc.innerText() : "";
+                    const time = (await tLoc.count() > 0) ? await tLoc.innerText() : "TBA";
+
+                    const rawDateString = (month && day) ? `${month.trim()} ${day.trim()}, 2026` : await show.innerText();
+                    const { title, date, time: cleanTime } = normalizeData(`${rawDateString} ${time}`, eventTitle);
+                    const formattedDate = formatDate(date);
+
+                    venueData.push({
+                        venue: 'KFC Yum! Center',
+                        title: title,
+                        date: formattedDate,
+                        time: formatTime(cleanTime),
+                        type: eventType
+                    });
+                }
+                console.log(`Pulling: ${eventTitle} [${eventType}]`);
+            } catch (e) { console.log(`Error scraping KFC detail: ${e.message.substring(0, 45)}`); }
         }
-
-        console.log(`🏁 Beasley Coliseum: ${venueData.length} rows (${otherVenue} other venues, ${parking} parking skipped).`);
-    } catch (err) {
-        console.error('❌ Beasley Coliseum failed:', err.message);
-    } finally {
-        await page.close();
-        await context.close();
-    }
-
+    } catch (e) { console.log(`KFC failed: ${e.message}`); }
+    await page.close();
     return venueData;
 }
 
-// =========================================================================
-// MAIN EXECUTION
-// =========================================================================
-if (require.main === module) {
-    (async () => {
-        const browser = await chromium.launch({ headless: false });
+// Amerant Bank Arena Main Function
+async function scrapeAmerant(browser) {
+    const page = await browser.newPage();
+    const venueData = [];
+    try {
+        await page.goto('https://www.amerantbankarena.com/events', { waitUntil: 'domcontentloaded', timeout: 30000 });
+        console.log(`\nScraping Amerant Bank Arena...`);
 
-        const results = await Promise.all([
-            scrapeAngelOfTheWinds(browser),
-            scrapeFirstHorizon(browser),
-            scrapeEagleBank(browser),
-            scrapeReedArena(browser),
-            scrapeThePit(browser),
-            scrapeKochArena(browser),
-            scrapeBeasley(browser)
-        ]);
+        try {
+            const loadMoreBtn = page.locator('#loadMoreEvents');
+            while (await loadMoreBtn.isVisible() && !(await loadMoreBtn.getAttribute('disabled'))) {
+                await loadMoreBtn.scrollIntoViewIfNeeded();
+                await loadMoreBtn.click();
+                await page.waitForTimeout(1500);
+            }
+        } catch (e) {}
 
-        const allData = results.flat();
-        console.log(`\n🏁 Total events scraped: ${allData.length}`);
-
-        const csvWriter = createCsvWriter({
-            path: 'calendar-5.csv',
-            header: [
-                { id: 'venue', title: 'VENUE' },
-                { id: 'title', title: 'EVENT NAME' },
-                { id: 'date', title: 'DATE' },
-                { id: 'time', title: 'TIME' },
-                { id: 'type', title: 'TYPE' }
-            ]
-        });
-
-        if (allData.length > 0) {
-            await csvWriter.writeRecords(allData);
-            console.log('💾 Saved to calendar-5.csv');
-        } else {
-            console.log('⚠️ No records to write.');
+        const eventLinks = await page.locator('h3.title a').all();
+        const urlsToVisit = [];
+        for (const link of eventLinks) {
+            const href = await link.getAttribute('href');
+            if (href) urlsToVisit.push(href.startsWith('http') ? href : `https://www.amerantbankarena.com${href}`);
         }
 
-        await browser.close();
-    })();
+        const uniqueUrls = [...new Set(urlsToVisit)].filter(url => url.includes('/events/detail/'));
+        console.log(`Found ${uniqueUrls.length} Amerant events. Scraping...`);
+
+        for (const detailUrl of uniqueUrls) {
+            try {
+                await page.goto(detailUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+                const titleLoc = page.locator('h1.title, h1').first();
+                const eventTitle = (await titleLoc.count() > 0) ? await titleLoc.innerText() : "Event";
+
+                try {
+                    const moreInfoBtn = page.locator('button.read-more');
+                    if (await moreInfoBtn.isVisible()) {
+                        await moreInfoBtn.click();
+                        await page.waitForTimeout(300);
+                    }
+                } catch (e) {}
+
+                const descLoc = page.locator('.description_inner');
+                const eventDescription = (await descLoc.count() > 0) ? await descLoc.textContent() : "";
+                const eventType = categorizeAmerant(eventTitle, eventDescription);
+
+                const showtimeItems = await page.locator('ul.list li.listItem, .showings_list li').all();
+
+                for (const show of showtimeItems) {
+                    const mLoc = show.locator('.m-date__month');
+                    const dLoc = show.locator('.m-date__day');
+                    const tLoc = show.locator('.time.cell, .time');
+
+                    const month = (await mLoc.count() > 0) ? await mLoc.innerText() : "";
+                    const day = (await dLoc.count() > 0) ? await dLoc.innerText() : "";
+                    const time = (await tLoc.count() > 0) ? await tLoc.innerText() : "TBA";
+
+                    const rawDateString = (month && day) ? `${month.trim()} ${day.trim()}, 2026` : await show.innerText();
+                    const { title, date, time: cleanTime } = normalizeData(`${rawDateString} ${time}`, eventTitle);
+                    const formattedDate = formatDate(date);
+
+                    venueData.push({
+                        venue: 'Amerant Bank Arena',
+                        title: title,
+                        date: formattedDate,
+                        time: formatTime(cleanTime),
+                        type: eventType
+                    });
+                }
+                console.log(`Pulling ${eventTitle} as ${eventType}`);
+            } catch (e) { console.log(`Error scraping Amerant detail: ${e.message.substring(0, 45)}`); }
+        }
+    } catch (e) { console.log(`Amerant failed: ${e.message}`); }
+    await page.close();
+    return venueData;
 }
 
-module.exports = { scrapeAngelOfTheWinds, scrapeFirstHorizon, scrapeEagleBank, scrapeReedArena, scrapeThePit, scrapeKochArena, scrapeBeasley };
+
+// Canada Life Centre Main Function
+async function scrapeCanadaLifeCentre(browser) {
+    const page = await browser.newPage();
+    const venueData = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    try {
+        console.log(`\nScraping Canada Life Centre...`);
+        await page.goto('https://www.canadalifecentre.ca/events/', { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await page.waitForTimeout(2000);
+
+        const rawEvents = await page.evaluate(() => {
+            const results = [];
+            // Target the widget title container directly from your HTML snippet
+            const titleBlocks = document.querySelectorAll('.rhc-widget-upcoming-title, div:has(> a.rhc-title-link)');
+
+            titleBlocks.forEach(block => {
+                const titleLink = block.querySelector('a.rhc-title-link, a[itemprop="url"]');
+                const title = titleLink ? titleLink.innerText.trim() : "";
+
+                const dateEl = block.querySelector('.rhc-widget-date, .rhc_date');
+                const timeEl = block.querySelector('.rhc-widget-time');
+
+                const rawDate = dateEl ? dateEl.innerText.trim() : ""; // e.g. "Nov 13, 2026"
+                const rawTime = timeEl ? timeEl.innerText.trim() : "TBA"; // e.g. "7:00pm"
+
+                if (title && rawDate) {
+                    results.push({ title, rawDate, rawTime });
+                }
+            });
+
+            return results;
+        });
+
+        console.log(`Found ${rawEvents.length} Canada Life Centre events.`);
+        const seen = new Set();
+
+        for (const ev of rawEvents) {
+            const cleanDate = formatDate(ev.rawDate);
+            const cleanTime = formatTime(ev.rawTime);
+
+            if (cleanDate !== "TBA" && new Date(cleanDate) < today) continue;
+
+            const cleanTitle = ev.title.replace(/\s+/g, ' ').trim();
+            const eventType = categorizeCanadaLifeCentre(cleanTitle, "");
+
+            const dedupeKey = `${cleanDate}-${cleanTime}-${cleanTitle}`;
+            if (seen.has(dedupeKey)) continue;
+            seen.add(dedupeKey);
+
+            venueData.push({
+                venue: 'Canada Life Centre',
+                title: cleanTitle,
+                date: cleanDate,
+                time: cleanTime,
+                type: eventType
+            });
+
+            console.log(`✅ Kept: ${cleanTitle} on ${cleanDate} (${cleanTime}) [${eventType}]`);
+        }
+
+    } catch (e) {
+        console.log(`Canada Life failed: ${e.message}`);
+    } finally {
+        await page.close();
+    }
+    return venueData;
+}
+
+// Chartway Arena scraper
+
+async function scrapeChartway(browser) {
+    const page = await browser.newPage();
+    const venueData = [];
+    try {
+        await page.goto('https://www.chartwayarena.com/events', { waitUntil: 'domcontentloaded', timeout: 30000 });
+        console.log(`\nScraping Chartway Arena...`);
+
+        try {
+            const cookieBtn = page.getByRole('button', { name: 'Accept All Cookies' });
+            if (await cookieBtn.isVisible({ timeout: 5000 })) {
+                await cookieBtn.click();
+                await page.waitForTimeout(1000);
+            }
+        } catch (e) {}
+
+        const moreBtn = page.locator('#loadMoreEvents');
+        while (await moreBtn.isVisible()) {
+            await moreBtn.click();
+            await page.waitForTimeout(1000);
+        }
+
+        const urls = await page.evaluate(() => {
+            return Array.from(document.querySelectorAll('.eventItem .thumb a')).map(a => a.href);
+        });
+
+        console.log(`Found ${urls.length} Chartway events. Starting parsing...`);
+        const today = new Date().toISOString().split('T')[0];
+
+        for (const url of urls) {
+            try {
+                await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+
+                const titleLoc = page.locator('h1.title, h1').first();
+                if (await titleLoc.count() === 0) continue;
+                const title = await titleLoc.innerText();
+
+                let cleanDate = "TBA";
+                let eventTime = "TBA";
+
+                const showingsDateLoc = page.locator('.showings_date').first();
+                if (await showingsDateLoc.count() > 0) {
+                    const ariaLabel = await showingsDateLoc.getAttribute('aria-label') || "";
+                    const yearMatch = ariaLabel.match(/\d{4}/);
+                    const dynamicYear = yearMatch ? yearMatch[0] : new Date().getFullYear().toString();
+
+                    const monthLoc = showingsDateLoc.locator('.m-date__month').first();
+                    const dayLoc = showingsDateLoc.locator('.m-date__day').first();
+                    const month = (await monthLoc.count() > 0) ? await monthLoc.innerText() : "";
+                    const day = (await dayLoc.count() > 0) ? await dayLoc.innerText() : "";
+
+                    if (month && day) cleanDate = formatDate(`${month} ${day} ${dynamicYear}`);
+
+                    const hourLoc = showingsDateLoc.locator('.m-date__hour').first();
+                    if (await hourLoc.count() > 0) {
+                        const rawHour = await hourLoc.innerText();
+                        eventTime = rawHour.replace('@', '').trim();
+                    }
+                }
+
+                if (cleanDate !== "TBA" && cleanDate < today) continue;
+
+                const descLoc = page.locator('.description_inner').first();
+                const description = (await descLoc.count() > 0) ? await descLoc.innerText() : "";
+
+                venueData.push({
+                    venue: 'Old Dominion - Chartway Arena',
+                    title: title.trim(),
+                    date: cleanDate,
+                    time: formatTime(eventTime),
+                    type: categorizeChartway(title + " " + description)
+                });
+
+                console.log(`Pulling ${title.trim()} [${cleanDate}]`);
+            } catch (err) { console.log(`Failed on ${url}: ${err.message.substring(0, 45)}`); }
+        }
+    } catch (e) { console.log(`Chartway failed: ${e.message}`); }
+    await page.close();
+    return venueData;
+}
+
+async function scrapeFaurotField(browser) {
+    const page = await browser.newPage();
+    const venueData = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    try {
+        console.log(`\n🚀 Scraping Faurot Field (Mizzou Football)...`);
+        await setupTranscendKiller(page);
+        
+        await page.goto('https://mutigers.com/sports/football/schedule/2026', {
+            waitUntil: 'domcontentloaded',
+            timeout: 30000
+        });
+
+        const cardSelector = '.schedule-event-item__top, .schedule-event-item';
+        await page.waitForSelector(cardSelector, { timeout: 15000 });
+
+        const gameCards = await page.locator(cardSelector).all();
+        console.log(`📋 Found ${gameCards.length} game cards. Filtering for Faurot Field home games...`);
+
+        for (const card of gameCards) {
+            try {
+                const venueTypeLoc = card.locator('.schedule-event-date__venue-label').first();
+                const venueNameLoc = card.locator('.schedule-event-item__venue, .schedule-default-event__venue').first();
+                const locationLoc = card.locator('.schedule-event-item__location, .schedule-event-location').first();
+
+                const venueType = (await venueTypeLoc.count() > 0) ? await venueTypeLoc.innerText() : "";
+                const venueName = (await venueNameLoc.count() > 0) ? await venueNameLoc.innerText() : "";
+                const locationText = (await locationLoc.count() > 0) ? await locationLoc.innerText() : "";
+                const fullLocation = `${venueType} ${venueName} ${locationText}`.toUpperCase();
+
+                const isHomeGame = fullLocation.includes('HOME') || 
+                                   fullLocation.includes('MEMORIAL STADIUM') || 
+                                   fullLocation.includes('FAUROT FIELD') || 
+                                   fullLocation.includes('COLUMBIA');
+
+                if (isHomeGame) {
+                    const opponentLoc = card.locator('.schedule-default-event__opponent-name').first();
+                    let opponent = "";
+                    if (await opponentLoc.count() > 0) {
+                        opponent = await opponentLoc.innerText();
+                    } else {
+                        const fallbackNameLoc = card.locator('.schedule-default-event__name').first();
+                        if (await fallbackNameLoc.count() > 0) opponent = await fallbackNameLoc.innerText();
+                    }
+                    if (!opponent) continue;
+
+                    const dateLoc = card.locator('.schedule-event-date__month-day').first();
+                    let rawDate = (await dateLoc.count() > 0) ? await dateLoc.innerText() : "";
+
+                    const timeLoc = card.locator('.schedule-event-item-result__label, .schedule-event-date__time').first();
+                    let rawTime = (await timeLoc.count() > 0) ? await timeLoc.innerText() : "TBA";
+
+                    const cleanDate = formatDate(`${rawDate} 2026`);
+                    const cleanTime = formatTime(rawTime);
+
+                    const eventDate = new Date(cleanDate);
+                    if (cleanDate !== 'TBA' && eventDate < today) {
+                        continue;
+                    }
+
+                    const finalTitle = `MISSOURI VS ${opponent.replace(/\s+/g, ' ').trim().toUpperCase()}`;
+
+                    venueData.push({
+                        venue: 'Mizzou: Faurot Field',
+                        title: finalTitle,
+                        date: cleanDate,
+                        time: cleanTime,
+                        type: 'NCAA Football'
+                    });
+
+                    console.log(`✅ Kept: ${finalTitle} on ${cleanDate} at ${cleanTime}`);
+                }
+            } catch (err) { console.log(`Error processing Faurot card: ${err.message.substring(0, 45)}`); }
+        }
+    } catch (e) { console.log(`❌ Faurot Field failed: ${e.message}`); }
+    await page.close();
+    return venueData;
+}
+
+async function scrapeTQL(browser) {
+    const page = await browser.newPage();
+    const today = new Date().toISOString().split('T')[0];
+    const venueData = [];
+    try {
+        await setupTranscendKiller(page);
+        await page.goto('https://tqlstadium.com/events', { waitUntil: 'domcontentloaded', timeout: 30000 });
+        console.log(`\nScraping TQL...`);
+
+        const eventItems = await page.locator('.eventlist-column-info').all();
+        console.log(`Found ${eventItems.length} events at TQL Stadium.`);
+
+        for (const item of eventItems) {
+            try {
+                const title = await item.locator('.eventlist-title-link').innerText();
+                const categoryText = await item.locator('.eventlist-cats').innerText();
+                const rawDate = await item.locator('time.event-date').getAttribute('datetime');
+
+                if (rawDate < today) continue;
+
+                const rawTime = await item.locator('.event-time-localized-start').innerText();
+                const eventType = categorizeTQL(title, categoryText);
+
+                venueData.push({
+                    venue: 'TQL Stadium',
+                    title: title.trim(),
+                    date: rawDate,
+                    time: formatTime(rawTime.trim()),
+                    type: eventType
+                });
+                console.log(`Pulling ${title.trim()} [${eventType}]`);
+            } catch (err) { continue; }
+        }
+    } catch (e) { console.log(`TQL failed: ${e.message}`); }
+    await page.close();
+    return venueData;
+}
+
+async function scrapeVillanova(browser) {
+    const page = await browser.newPage();
+    const today = new Date().toISOString().split('T')[0];
+    const venueData = [];
+    try {
+        await setupTranscendKiller(page);
+        await page.goto('https://villanova.com/calendar', { waitUntil: 'domcontentloaded', timeout: 30000 });
+        console.log(`\nScraping Villanova...`);
+
+        const monthsToScrape = 12;
+
+        for (let i = 0; i < monthsToScrape; i++) {
+            const header = page.locator('span[data-bind*="formatDate: selectedDate"]').first();
+            await header.waitFor({ state: 'visible', timeout: 15000 });
+            const monthYearText = await header.innerText();
+
+            console.log(`Scraping Villanova: ${monthYearText}`);
+
+            const expandButtons = await page.locator('button.sidearm-calendar-table-cell-toggle-button').all();
+            for (const btn of expandButtons) {
+                try {
+                    if (await btn.isVisible()) await btn.click();
+                } catch (e) { continue; }
+            }
+            await page.waitForTimeout(500);
+
+            const dayCells = await page.locator('.sidearm-calendar-table-cell').all();
+            for (const cell of dayCells) {
+                const dayNumLoc = cell.locator('time[data-bind*="format: \'D\'"]');
+                if (await dayNumLoc.count() === 0) continue;
+
+                const dayNum = await dayNumLoc.innerText();
+                const cleanDate = formatDate(`${monthYearText.split(' ')[0]} ${dayNum} ${monthYearText.split(' ')[1]}`);
+                if (cleanDate < today) continue;
+
+                const events = await cell.locator('ul.sidearm-calendar-table-cell-events li.sidearm-calendar-table-cell-event').all();
+
+                for (const event of events) {
+                    try {
+                        const eventText = await event.innerText();
+                        // Requirement: scrape only villanova, Pa. (exclude Philadelphia, Pa. or others)
+                        const locLower = eventText.toLowerCase();
+                        if (!locLower.includes('villanova, pa')) {
+                            continue;
+                        }
+
+                        const sportCode = await event.locator('span[data-bind*="sport.short_display"]').innerText();
+                        const opponent = await event.locator('span[data-bind*="opponent.title"]').innerText();
+                        const eventType = categorizeVillanova(sportCode, opponent);
+
+                        if (!eventType) continue;
+
+                        let finalTime = "TBA";
+                        const timeMatch = eventText.match(/(\d{1,2}(:\d{2})?\s*(?:p\.m\.|a\.m\.|AM|PM))/i);
+                        if (timeMatch) finalTime = timeMatch[1];
+
+                        venueData.push({
+                            venue: 'Villanova - Finneran Pavilion',
+                            title: `${sportCode} vs ${opponent}`,
+                            date: cleanDate,
+                            time: formatTime(finalTime),
+                            type: eventType
+                        });
+                    } catch (err) { continue; }
+                }
+            }
+
+            await page.locator('button.slick-next').first().click();
+            await page.waitForFunction(
+                (old, sel) => document.querySelector(sel)?.innerText !== old,
+                monthYearText,
+                'span[data-bind*="formatDate: selectedDate"]'
+            );
+            await page.waitForTimeout(1000);
+        }
+    } catch (e) { console.log(`Villanova failed: ${e.message}`); }
+    await page.close();
+    return venueData;
+}
+
+// ScottsMiracle-Gro Field scraper
+async function scrapeSMG(browser) {
+    const page = await browser.newPage();
+    const venueData = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    try {
+        console.log(`\n🚀 Scraping ScottsMiracle-Gro Field...`);
+        await page.goto('https://scottsmiraclegrofield.com/events/', { 
+            waitUntil: 'domcontentloaded', 
+            timeout: 30000 
+        });
+
+        await page.waitForTimeout(3000);
+
+        try { await page.locator('#onetrust-accept-btn-handler').click({ timeout: 3000 }); } catch (e) {}
+        try { await page.locator('.a5-widget-icon-html-close').click({ timeout: 2000 }); } catch (e) {}
+
+        // Scroll to load all cards
+        await page.evaluate(async () => {
+            await new Promise((resolve) => {
+                let totalHeight = 0;
+                const distance = 400;
+                const timer = setInterval(() => {
+                    const scrollHeight = document.body.scrollHeight;
+                    window.scrollBy(0, distance);
+                    totalHeight += distance;
+                    if (totalHeight >= scrollHeight) {
+                        clearInterval(timer);
+                        resolve();
+                    }
+                }, 150);
+            });
+        });
+        await page.waitForTimeout(1500);
+
+        const rawEvents = await page.evaluate(() => {
+            const results = [];
+            const cards = document.querySelectorAll('.fusion-layout-column, .fusion-column-wrapper');
+
+            cards.forEach(card => {
+                const titleLink = card.querySelector('h3.fusion-title-heading a, .fusion-title a, h2 a, h3 a');
+                if (!titleLink) return;
+
+                const title = titleLink.innerText.trim();
+                if (title.toLowerCase().includes('host an event')) return;
+
+                // Extract date from .et-date-underline or p tags
+                const dateEl = card.querySelector('.et-date-underline p, .fusion-text p');
+                const rawDateStr = dateEl ? dateEl.innerText.trim() : "";
+
+                if (title && rawDateStr) {
+                    results.push({
+                        title,
+                        rawDateStr
+                    });
+                }
+            });
+
+            return results;
+        });
+
+        console.log(`📋 Found ${rawEvents.length} distinct SMG cards. Expanding multi-day ranges...`);
+        const seen = new Set();
+
+        for (const ev of rawEvents) {
+            const cleanTitle = ev.title.replace(/\s+/g, ' ').trim();
+            const category = categorizeSMG(cleanTitle);
+
+            // Handle date ranges like "Nov 7 - Nov 13"
+            let dates = [];
+            const rangeMatch = ev.rawDateStr.match(/([A-Za-z]{3,9})\s+(\d{1,2})\s*-\s*(?:([A-Za-z]{3,9})\s+)?(\d{1,2})(?:,?\s*(\d{4}))?/i);
+
+            if (rangeMatch) {
+                const startMonth = rangeMatch[1];
+                const startDay = parseInt(rangeMatch[2]);
+                const endMonth = rangeMatch[3] || startMonth;
+                const endDay = parseInt(rangeMatch[4]);
+                const year = rangeMatch[5] || '2026';
+
+                // Pass into expandDateRange formatted as "Nov 7 - Nov 13, 2026"
+                dates = expandDateRange(`${startMonth} ${startDay} - ${endDay}, ${year}`);
+            } else {
+                dates = [formatDate(`${ev.rawDateStr} 2026`)];
+            }
+
+            for (const singleDate of dates) {
+                if (singleDate !== "TBA" && new Date(singleDate) < today) continue;
+
+                const dedupeKey = `${singleDate}-${cleanTitle}`;
+                if (seen.has(dedupeKey)) continue;
+                seen.add(dedupeKey);
+
+                venueData.push({
+                    venue: 'ScottsMiracle-Gro Field',
+                    title: cleanTitle,
+                    date: singleDate,
+                    time: 'TBA',
+                    type: category
+                });
+
+                console.log(`✅ Kept: ${cleanTitle} on ${singleDate} [${category}]`);
+            }
+        }
+
+    } catch (e) {
+        console.log(`❌ ScottsMiracleGro-Field failed: ${e.message}`);
+    } finally {
+        await page.close();
+    }
+    return venueData;
+}
+// =======================================================================================
+// MAIN RUNNER
+
+(async () => {
+    const browser = await chromium.launch({ headless: false });
+
+    const results = await Promise.all([
+        scrapeCapitalOne(browser),
+        scrapeEnterprise(browser),
+        scrapeGoHeels(browser),
+        scrapeGrandCasino(browser),
+        scrapeKFC(browser),
+        scrapeAmerant(browser),
+        scrapeCanadaLifeCentre(browser),
+        scrapeChartway(browser),
+        scrapeFaurotField(browser),
+        scrapeTQL(browser),
+        scrapeVillanova(browser),
+        scrapeSMG(browser)
+    ]);
+
+    const allData = results.flat();
+    console.log(`\n🏁 Total events scraped: ${allData.length}`);
+
+    const csvWriter = createCsvWriter({
+        path: 'calendar-1.csv',
+        header: [
+            { id: 'venue', title: 'VENUE' },
+            { id: 'title', title: 'EVENT NAME' },
+            { id: 'date', title: 'DATE' },
+            { id: 'time', title: 'TIME' },
+            { id: 'type', title: 'TYPE' }
+        ]
+    });
+
+    if (allData.length > 0) {
+        await csvWriter.writeRecords(allData);
+        console.log('✅ Done! All events saved to calendar-1.csv');
+    } else {
+        console.log('⚠️ No data to write to CSV.');
+    }
+
+    await browser.close();
+})();
