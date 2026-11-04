@@ -80,6 +80,29 @@ function formatTime(timeStr) {
     return timeStr;
 }
 
+// Format time for Xfinity
+function formatTimeXfinity(timeStr) {
+    if (!timeStr || timeStr === 'TBA' || timeStr.toUpperCase() === '12:00AM' || timeStr.toUpperCase() === '12:00 AM') {
+        return 'TBA';
+    }
+
+    let cleaned = timeStr.toUpperCase().replace(/\./g, '').replace(/ET|CT|PT|MT|EDT|CDT/g, '').trim();
+    const match = cleaned.match(/(\d{1,2}(?::\d{2})?)\s*(AM|PM)/i);
+
+    if (match) {
+        let timePart = match[1];
+        let ampm = match[2].toUpperCase();
+
+        if (!timePart.includes(':')) {
+            timePart += ':00';
+        }
+
+        return `${timePart}${ampm}`;
+    }
+
+    return 'TBA';
+}
+
 // Expand date ranges into individual dates
 function expandDateRange(dateStr, isGoHeels = false) {
     const monthMap = {
@@ -303,16 +326,40 @@ async function setupTranscendKillerXS(page) {
     });
 }
 
-function cleanOpponent(rawTeam) {
-    if (!rawTeam) return "Opponent TBD";
-    return rawTeam
-        .replace(/#\d+/g, '')
-        .replace(/^(vs\.|at)/i, '')
-        .replace(/\b(Wear Orange|Country Night|Alumni Night|Senior Night|Spring Break|90s Night|Preview Meet)\b/gi, '')
-        .replace(/\s+/g, ' ')
-        .trim();
+
+function toTitleCase(str) {
+    if (!str) return '';
+    return str
+        .toLowerCase()
+        .split(' ')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
 }
 
+function cleanOpponent(rawTeam) {
+    if (!rawTeam) return "Opponent TBD";
+    let clean = rawTeam
+        .replace(/#\d+/g, '')
+        .replace(/^(vs\.|at)/i, '')
+        .replace(/\b(Wear Orange|Country Night|Alumni Night|Senior Night|Spring Break|90s Night|Preview Meet|Season Opener|One Night Only)\b/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    return toTitleCase(clean);
+}
+
+function formatFosterTime(rawTime) {
+    if (!rawTime || rawTime.toUpperCase().includes('TBA')) return 'TBA';
+    let clean = rawTime.replace(/\./g, '').trim(); // "6 pm CT"
+    const match = clean.match(/(\d{1,2}(?::\d{2})?)\s*(am|pm)(?:\s*(ct|cst|et|est))?/i);
+    if (match) {
+        let t = match[1];
+        let ampm = match[2].toUpperCase();
+        let tz = match[3] ? ` ${match[3].toUpperCase()}` : ' CT';
+        if (!t.includes(':')) t += ':00';
+        return `${t}${ampm}${tz}`;
+    }
+    return clean;
+}
 //========================================
 // SORTING TYPE FUNCTION
 //Baylor Concert Function Time
@@ -341,144 +388,98 @@ async function scrapeBaylor(browser) {
     today.setHours(0, 0, 0, 0);
     const seenEvents = new Set();
 
-    try {
-        console.log(`\n🚀 Scraping Baylor Foster Pavilion Schedule...`);
-        // Navigate with list view parameter to expose every single event without FullCalendar +X more clipping
-        await page.goto('https://baylorbears.com/calendar?view=list', { 
-            waitUntil: 'domcontentloaded', 
-            timeout: 35000 
-        });
+    // Query direct Men's and Women's Basketball schedules to guarantee 100% full coverage
+    const directSchedules = [
+        { 
+            url: 'https://baylorbears.com/sports/mens-basketball/schedule', 
+            type: 'NCAA MB', 
+            teamPrefix: 'Baylor Bears' 
+        },
+        { 
+            url: 'https://baylorbears.com/sports/womens-basketball/schedule', 
+            type: 'NCAA WB', 
+            teamPrefix: 'Baylor Lady Bears' 
+        }
+    ];
 
-        await page.waitForTimeout(3000);
+    for (const sched of directSchedules) {
+        try {
+            console.log(`\n🐻 Scraping Baylor (${sched.teamPrefix})...`);
+            await page.goto(sched.url, { waitUntil: 'domcontentloaded', timeout: 35000 });
+            await page.waitForTimeout(2000);
 
-        // Fallback: If list view container is not present, iterate months in standard calendar
-        const hasListView = await page.locator('.c-calendar-list, .sidearm-calendar-list, [data-test-id="s-game-card-standard__root"]').count() > 0;
+            await page.waitForSelector('[data-test-id="s-game-card-standard__root"], .schedule-event-item', { timeout: 15000 }).catch(() => {});
 
-        if (hasListView) {
-            console.log("📋 List view active. Parsing all upcoming events...");
-            const cards = await page.locator('[data-test-id="s-game-card-standard__root"], .c-calendar-list__item, .schedule-event-item').all();
+            const rawGames = await page.evaluate(() => {
+                const results = [];
+                const cards = document.querySelectorAll('[data-test-id="s-game-card-standard__root"], .schedule-event-item');
 
-            for (const card of cards) {
-                try {
-                    const cardText = await card.innerText();
-                    if (!cardText.toLowerCase().includes('foster pavilion') && !cardText.toLowerCase().includes('waco')) {
-                        continue;
+                cards.forEach(card => {
+                    const fullText = card.innerText || "";
+                    if (!fullText.toLowerCase().includes('foster pavilion') && !fullText.toLowerCase().includes('waco')) {
+                        return;
                     }
 
-                    const opponentLoc = card.locator('[data-test-id="s-game-card-standard__header-team-opponent-link"], .c-calendar-list__opponent, .opponent-name').first();
-                    const opponent = (await opponentLoc.count() > 0) ? await opponentLoc.innerText() : "Opponent TBD";
+                    // Opponent
+                    const oppEl = card.querySelector('[data-test-id="s-game-card-standard__header-team-opponent-link"], .schedule-default-event__opponent-name');
+                    const opponent = oppEl ? oppEl.innerText.trim() : "";
 
-                    const sportCodeLoc = card.locator('.mx-\\[4px\\], .c-calendar-list__sport, .sport-name').first();
-                    const sportCode = (await sportCodeLoc.count() > 0) ? await sportCodeLoc.innerText() : "";
+                    // Date: check both modern header date and legacy Sidearm tag
+                    const dateEl = card.querySelector('[data-test-id="s-game-card-standard__header-game-date"], .schedule-event-date__month-day, [data-test-id="s-game-card-standard__header-game-date-details"]');
+                    const rawDate = dateEl ? dateEl.innerText.trim() : "";
 
-                    const dateLoc = card.locator('[data-test-id="s-game-card-standard__header-game-date"], [data-test-id="s-game-card-standard__header-game-date-details"], .c-calendar-list__date, .event-date').first();
-                    const rawDate = (await dateLoc.count() > 0) ? await dateLoc.innerText() : "";
+                    // Time: check aria-label="Event Time" or result label
+                    const timeEl = card.querySelector('[aria-label="Event Time"], .schedule-event-item-result__label');
+                    const rawTime = timeEl ? timeEl.innerText.trim() : "TBA";
 
-                    const timeLoc = card.locator('[aria-label="Event Time"], .c-calendar-list__time, .event-time').first();
-                    let rawTime = "TBA";
-                    if (await timeLoc.count() > 0) {
-                        rawTime = await timeLoc.innerText();
+                    if (opponent && rawDate) {
+                        results.push({ opponent, rawDate, rawTime });
                     }
+                });
+                return results;
+            });
 
-                    const monthStr = rawDate.toLowerCase().substring(0, 3);
-                    const year = getYearForMonth(monthStr);
-                    const cleanDate = formatDate(`${rawDate} ${year}`);
-                    const cleanTime = formatTime(rawTime);
+            console.log(`📋 Found ${rawGames.length} ${sched.teamPrefix} home games at Foster Pavilion.`);
 
-                    if (cleanDate !== "TBA" && new Date(cleanDate) < today) continue;
+            for (const game of rawGames) {
+                // Parse date cleanly (e.g. "Nov 2 (Mon)" -> "Nov 2")
+                let cleanMonthDay = game.rawDate.replace(/\(.*\)/g, '').trim();
+                const monthStr = cleanMonthDay.split(' ')[0].toLowerCase().substring(0, 3);
+                const yr = getYearForMonth(monthStr);
+                const cleanDate = formatDate(`${cleanMonthDay} ${yr}`);
 
-                    let type = 'Other';
-                    if (sportCode.includes('MBB') || cardText.includes('Men\'s Basketball')) type = 'NCAA MB';
-                    else if (sportCode.includes('WBB') || cardText.includes('Women\'s Basketball')) type = 'NCAA WB';
-                    else if (cardText.toLowerCase().includes('concert')) type = 'Concert';
+                const cleanTime = formatFosterTime(game.rawTime);
 
-                    const finalTitle = `BAYLOR VS. ${cleanOpponent(opponent).toUpperCase()}`;
-                    const dedupeKey = `${cleanDate}-${finalTitle}`;
+                if (cleanDate !== "TBA" && new Date(cleanDate) < today) continue;
 
-                    if (!seenEvents.has(dedupeKey)) {
-                        seenEvents.add(dedupeKey);
-                        venueData.push({
-                            venue: 'Baylor - Foster Pavilion',
-                            title: finalTitle,
-                            date: cleanDate,
-                            time: cleanTime,
-                            type: type
-                        });
-                        console.log(`✅ Kept: ${finalTitle} on ${cleanDate} (${cleanTime}) [${type}]`);
-                    }
-                } catch (err) { continue; }
+                const cleanOpp = cleanOpponent(game.opponent);
+                const finalTitle = `${sched.teamPrefix} vs. ${cleanOpp}`;
+                const dedupeKey = `${cleanDate}-${cleanTime}-${finalTitle}`;
+
+                if (seenEvents.has(dedupeKey)) continue;
+                seenEvents.add(dedupeKey);
+
+                venueData.push({
+                    venue: 'Foster Pavilion',
+                    title: finalTitle,
+                    date: cleanDate,
+                    time: cleanTime,
+                    type: sched.type
+                });
+
+                console.log(`✅ Kept: ${finalTitle} on ${cleanDate} (${cleanTime}) [${sched.type}]`);
             }
+        } catch (e) {
+            console.log(`❌ Error scraping ${sched.teamPrefix}: ${e.message}`);
         }
-
-        // Also query direct Men's and Women's Basketball schedules to guarantee 100% full coverage
-        const directSchedules = [
-            { url: 'https://baylorbears.com/sports/mens-basketball/schedule', type: 'NCAA MB' },
-            { url: 'https://baylorbears.com/sports/womens-basketball/schedule', type: 'NCAA WB' }
-        ];
-
-        for (const sched of directSchedules) {
-            try {
-                await page.goto(sched.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-                await page.waitForTimeout(2000);
-
-                const gameRows = await page.locator('[data-test-id="s-game-card-standard__root"], .schedule-event-item').all();
-                for (const row of gameRows) {
-                    try {
-                        const locText = await row.innerText();
-                        if (!locText.toLowerCase().includes('foster pavilion') && !locText.toLowerCase().includes('waco')) {
-                            continue;
-                        }
-
-                        const oppLoc = row.locator('[data-test-id="s-game-card-standard__header-team-opponent-link"], .schedule-default-event__opponent-name').first();
-                        const opp = (await oppLoc.count() > 0) ? await oppLoc.innerText() : "";
-                        if (!opp) continue;
-
-                        const dLoc = row.locator('[data-test-id="s-game-card-standard__header-game-date"], .schedule-event-date__month-day').first();
-                        const rawD = (await dLoc.count() > 0) ? await dLoc.innerText() : "";
-
-                        const tLoc = row.locator('[aria-label="Event Time"], .schedule-event-item-result__label').first();
-                        let rawT = "TBA";
-                        if (await tLoc.count() > 0) {
-                            const candidate = await tLoc.innerText();
-                            const match = candidate.match(/(\d{1,2}(?::\d{2})?\s*(?:AM|PM|am|pm))/i);
-                            if (match) rawT = match[0];
-                        }
-
-                        const mStr = rawD.toLowerCase().substring(0, 3);
-                        const yr = getYearForMonth(mStr);
-                        const cDate = formatDate(`${rawD} ${yr}`);
-                        const cTime = formatTime(rawT);
-
-                        if (cDate !== "TBA" && new Date(cDate) < today) continue;
-
-                        const fTitle = `BAYLOR VS. ${cleanOpponent(opp).toUpperCase()}`;
-                        const dKey = `${cDate}-${fTitle}`;
-
-                        if (!seenEvents.has(dKey)) {
-                            seenEvents.add(dKey);
-                            venueData.push({
-                                venue: 'Foster Pavilion',
-                                title: fTitle,
-                                date: cDate,
-                                time: cTime,
-                                type: sched.type
-                            });
-                            console.log(`✅ Kept: ${fTitle} on ${cDate} (${cTime}) [${sched.type}]`);
-                        }
-                    } catch (e) { continue; }
-                }
-            } catch (e) { continue; }
-        }
-
-    } catch (e) {
-        console.log(`❌ Baylor failed: ${e.message}`);
-    } finally {
-        await page.close();
-        await context.close();
     }
 
+    await page.close();
+    await context.close();
     return venueData;
 }
+
+
 // Xfinity Center - Sports
 async function scrapeXfinityE(browser) {
     const context = await browser.newContext({
@@ -497,16 +498,13 @@ async function scrapeXfinityE(browser) {
             timeout: 30000
         });
 
-        // Dismiss privacy / cookie banner if present
         try {
             const acceptBtn = page.getByRole('button', { name: 'Accept All' });
             if (await acceptBtn.isVisible({ timeout: 3000 })) await acceptBtn.click();
         } catch (e) {}
 
-        // Wait for modern Ticketmaster containers
-        await page.waitForSelector('a[data-testid="event-list-link"], div[class*="sc-eb703eab-0"], li[data-id]', { timeout: 15000 });
+        await page.waitForSelector('li[data-id], div[class*="sc-451c8dd0-2"], div[class*="sc-eb703eab-0"]', { timeout: 15000 });
 
-        // Expand Load More if available
         try {
             const loadMoreBtn = page.locator('button[data-testid="event-list-load-more"]');
             while (await loadMoreBtn.isVisible({ timeout: 2000 })) {
@@ -518,26 +516,57 @@ async function scrapeXfinityE(browser) {
 
         const events = await page.evaluate(() => {
             const results = [];
-            const items = document.querySelectorAll('li[data-id], div[class*="sc-eb703eab-0"]');
+            const items = document.querySelectorAll('li[data-id], div[class*="sc-451c8dd0-2"], div[class*="sc-eb703eab-0"]');
 
             items.forEach(item => {
-                const titleEl = item.querySelector('span[class*="ufMKn"], [class*="EventName"]');
-                let title = titleEl ? titleEl.innerText.trim() : "";
+                // 1. EXTRACT TITLE
+                let title = "";
+                const directTitle = item.querySelector('[class*="eMziwB"], [class*="hzNfZR"] span');
+                if (directTitle) {
+                    title = directTitle.innerText.trim();
+                }
 
-                const hiddenDateEl = item.querySelector('.VisuallyHidden-sc-8buqks-0 span');
-                const dateRaw = hiddenDateEl ? hiddenDateEl.innerText.trim() : "";
-
-                const timeEl = item.querySelector('span[class*="bZWmdt"] span, span[class*="fCBXcp"] .VisuallyHidden-sc-8buqks-0 span');
-                const timeRaw = timeEl ? timeEl.innerText.trim() : "";
-
-                if (!title) {
-                    const fallbackLink = item.querySelector('a[data-testid="event-list-link"]');
-                    if (fallbackLink) {
-                        title = fallbackLink.innerText.split('\n')[0].trim();
+                if (!title || title.toLowerCase() === 'find tickets') {
+                    const hiddenTextEl = item.querySelector('button[aria-controls="eventOverflow"] .VisuallyHidden-sc-8buqks-0, a[data-testid="event-list-link"] .VisuallyHidden-sc-8buqks-0');
+                    if (hiddenTextEl) {
+                        const rawHidden = hiddenTextEl.innerText;
+                        title = rawHidden.split(',')[0].replace(/Open additional information for/i, '').trim();
                     }
                 }
 
-                if (title && (dateRaw || timeRaw)) {
+                if (!title || title.toLowerCase() === 'find tickets') {
+                    const legacyTitle = item.querySelector('span[class*="ufMKn"], [class*="EventName"]');
+                    if (legacyTitle) {
+                        title = legacyTitle.innerText.trim();
+                    }
+                }
+
+                if (!title || title.toLowerCase() === 'find tickets') return;
+
+                // 2. EXTRACT DATE & TIME WITHOUT VOLATILE CSS HASHES
+                const hiddenSpans = Array.from(
+                    item.querySelectorAll('.VisuallyHidden-sc-8buqks-0 span, [class*="VisuallyHidden"] span')
+                ).map(el => el.innerText.trim()).filter(Boolean);
+
+                const dateRaw = hiddenSpans.length > 0 ? hiddenSpans[0] : "";
+
+                // Check remaining hidden spans and visible row text for time
+                const candidateTimeText = [
+                    ...hiddenSpans.slice(1),
+                    item.innerText || ""
+                ].join(" ");
+
+                const timeMatch = candidateTimeText.match(/\b(\d{1,2}:\d{2}\s*(?:AM|PM))\b/i);
+                let timeRaw = "TBA";
+                if (timeMatch) {
+                    const matched = timeMatch[1].replace(/\s+/g, '').toUpperCase();
+                    // Ticketmaster uses 12:00AM when the game time is unannounced/TBA
+                    if (matched !== '12:00AM' && matched !== '00:00AM') {
+                        timeRaw = matched.replace(/^0/, ''); // "01:00PM" -> "1:00PM"
+                    }
+                }
+
+                if (dateRaw) {
                     results.push({ dateRaw, timeRaw, title });
                 }
             });
@@ -551,21 +580,20 @@ async function scrapeXfinityE(browser) {
         for (const ev of events) {
             if (!ev.title) continue;
 
-            const cleanTitle = ev.title.replace(/\s+/g, ' ').trim().toUpperCase();
-            let type = 'Concert';
+            const cleanTitle = toTitleCase(ev.title.replace(/\s+/g, ' ').trim());
             const t = cleanTitle.toLowerCase();
+            let type = 'Concert';
 
-            if (t.includes('mens basketball') || t.includes('mbb') || t.includes("men's basketball")) {
-                type = 'NCAA MB';
-            } else if (t.includes('womens basketball') || t.includes('wbb') || t.includes("women's basketball")) {
+            if (t.includes('womens basketball') || t.includes('women basketball') || t.includes('wbb') || t.includes("women's basketball")) {
                 type = 'NCAA WB';
-            } else if (t.includes('volleyball')) {
+            } else if (t.includes('mens basketball') || t.includes('men basketball') || t.includes('mbb') || t.includes("men's basketball")) {
+                type = 'NCAA MB';
+            } else if (t.includes('volleyball') || t.includes('wvb')) {
                 type = 'NCAA WVB';
             }
 
             const cleanDate = formatDate(ev.dateRaw);
-            const timeMatch = ev.timeRaw.match(/\d{1,2}(?::\d{2})?\s*(?:AM|PM|am|pm)/i);
-            const cleanTime = formatTime(timeMatch ? timeMatch[0] : (ev.timeRaw || 'TBA'));
+            const cleanTime = ev.timeRaw === 'TBA' ? 'TBA' : formatTime(ev.timeRaw);
 
             const dedupeKey = `${cleanDate}-${cleanTime}-${cleanTitle}`;
             if (seenEvents.has(dedupeKey)) continue;
@@ -576,7 +604,7 @@ async function scrapeXfinityE(browser) {
             }
 
             venueData.push({
-                venue: 'Xfinity Center',
+                venue: 'Maryland - Xfinity Center',
                 title: cleanTitle,
                 date: cleanDate,
                 time: cleanTime,
@@ -639,21 +667,23 @@ function formatTimeMMB(rawTime) {
     return formatted;
 }
 
+// MIZZOU ARENA MEN BASKETBALL MAIN FUNCTION
 async function scrapeMizzouMB(browser) {
     const context = await browser.newContext({
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
         viewport: { width: 1366, height: 768 }
     });
     const page = await context.newPage();
-    await setupTranscendKiller(page);
+    await setupTranscendKillerMizzouMB(page);
 
     const venueData = [];
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+    const seenMBB = new Set();
 
     try {
         console.log(`\n🚀 Scraping Mizzou Men's Basketball Schedule...`);
-        await page.goto('https://mutigers.com/sports/mens-basketball/schedule/2026-27', {
+        await page.goto('https://mutigers.com/sports/mens-basketball/schedule/season/2026-27', {
             waitUntil: 'domcontentloaded',
             timeout: 30000
         });
@@ -666,72 +696,82 @@ async function scrapeMizzouMB(browser) {
 
         for (const card of gameCards) {
             try {
-                // 1. VENUE & LOCATION CHECK
-                const venueTypeLoc = card.locator('.schedule-event-date__venue-label').first();
-                const venueNameLoc = card.locator('.schedule-event-item__venue, .schedule-default-event__venue').first();
-                const locationLoc = card.locator('.schedule-event-item__location, .schedule-event-location').first();
+                // 1. VENUE & LOCATION CHECK (Strictly Mizzou Arena in Columbia, Mo.)
+                const cardText = await card.innerText();
+                const isHome = cardText.toUpperCase().includes('MIZZOU ARENA') && cardText.toUpperCase().includes('COLUMBIA');
 
-                const venueType = (await venueTypeLoc.count() > 0) ? await venueTypeLoc.innerText() : "";
-                const venueName = (await venueNameLoc.count() > 0) ? await venueNameLoc.innerText() : "";
-                const locationText = (await locationLoc.count() > 0) ? await locationLoc.innerText() : "";
-                const fullLocation = `${venueType} ${venueName} ${locationText}`.toUpperCase();
+                if (!isHome) continue;
 
-                const isMizzouArena = fullLocation.includes('MIZZOU ARENA') && fullLocation.includes('COLUMBIA');
+                // 2. OPPONENT EXTRACTION
+                const opponentLoc = card.locator('.schedule-default-event__opponent-name, .schedule-default-event__name').first();
+                let opponent = (await opponentLoc.count() > 0) ? await opponentLoc.innerText() : "";
+                if (!opponent) continue;
 
-                if (isMizzouArena) {
-                    // 2. OPPONENT EXTRACTION
-                    const opponentLoc = card.locator('.schedule-default-event__opponent-name').first();
-                    let opponent = "";
-                    if (await opponentLoc.count() > 0) {
-                        opponent = await opponentLoc.innerText();
-                    } else {
-                        const fallbackNameLoc = card.locator('.schedule-default-event__name').first();
-                        if (await fallbackNameLoc.count() > 0) opponent = await fallbackNameLoc.innerText();
-                    }
-                    if (!opponent) continue;
-
-                    // 3. DATE EXTRACTION (Using dynamic academic year resolver)
-                    const dateLoc = card.locator('.schedule-event-date__month-day').first();
-                    let rawDate = "";
-                    if (await dateLoc.count() > 0) {
-                        rawDate = await dateLoc.innerText(); // e.g. "Nov 7"
-                    }
-
-                    const monthStr = rawDate.split(' ')[0].toLowerCase().substring(0, 3);
-                    const yearStr = getYearForMonth(monthStr);
-                    const cleanDate = formatDate(`${rawDate} ${yearStr}`);
-
-                    // 4. TIME EXTRACTION
-                    let rawTime = "TBA";
-                    const timeLoc = card.locator('.schedule-event-item-result__label, .schedule-event-date__time').first();
-                    if (await timeLoc.count() > 0) {
-                        const candidateTime = await timeLoc.innerText();
-                        const match = candidateTime.match(/(\d{1,2}(?::\d{2})?\s*(?:AM|PM|am|pm))/i);
-                        if (match) {
-                            rawTime = match[0];
-                        }
-                    }
-
-                    const cleanTime = formatTime(rawTime);
-
-                    // Skip past games
-                    const eventDate = new Date(cleanDate);
-                    if (cleanDate !== 'TBA' && eventDate < today) {
-                        continue;
-                    }
-
-                    const finalTitle = `MISSOURI VS ${cleanOpponent(opponent).toUpperCase()}`;
-
-                    venueData.push({
-                        venue: 'Mizzou Arena',
-                        title: finalTitle,
-                        date: cleanDate,
-                        time: cleanTime,
-                        type: 'NCAA MB'
-                    });
-
-                    console.log(`✅ Kept: ${finalTitle} on ${cleanDate} (${cleanTime})`);
+                // 3. ACCURATE DATE & ISO TIME EXTRACTION (Using datetime attribute on <time>)
+                let cleanDate = "TBA";
+                let dtAttr = "";
+                const timeTag = card.locator('time[datetime]').first();
+                if (await timeTag.count() > 0) {
+                    dtAttr = (await timeTag.getAttribute('datetime')) || "";
+                    if (dtAttr) cleanDate = dtAttr.split('T')[0];
                 }
+
+                // Fallback to text day if datetime attribute is missing
+                if (cleanDate === "TBA") {
+                    const dayLoc = card.locator('.schedule-event-date__day').first();
+                    if (await dayLoc.count() > 0) {
+                        const rawD = await dayLoc.innerText(); // e.g. "Nov 3"
+                        const mStr = rawD.split(' ')[0].toLowerCase().substring(0, 3);
+                        cleanDate = formatDate(`${rawD} ${getYearForMonth(mStr)}`);
+                    }
+                }
+
+                // 4. TIME EXTRACTION
+                // Target .schedule-event-item-result__label directly (do NOT combine with .schedule-event-date__time)
+                let cleanTime = "TBA";
+                const resultTimeLoc = card.locator('.schedule-event-item-result__label, .schedule-event-item-result strong').first();
+                if (await resultTimeLoc.count() > 0) {
+                    const rawTimeText = await resultTimeLoc.evaluate(el => el.textContent || '');
+                    const match = rawTimeText.replace(/\./g, '').match(/(\d{1,2}(?::\d{2})?\s*(?:AM|PM|am|pm))/i);
+                    if (match) cleanTime = formatTime(match[1]);
+                }
+
+                // Fallback A: Parse directly from <time datetime="2026-11-03T19:00:00.000-06:00">
+                if (cleanTime === "TBA" && dtAttr.includes('T')) {
+                    const timePart = dtAttr.split('T')[1].substring(0, 5); // "19:00"
+                    if (timePart && timePart !== "00:00") {
+                        let [h, m] = timePart.split(':').map(Number);
+                        const ampm = h >= 12 ? 'PM' : 'AM';
+                        h = h % 12 || 12;
+                        cleanTime = `${h}:${String(m).padStart(2, '0')}${ampm}`;
+                    }
+                }
+
+                // Fallback B: Match against full card text
+                if (cleanTime === "TBA") {
+                    const fallbackMatch = cardText.replace(/\./g, '').match(/\b(\d{1,2}(?::\d{2})?\s*(?:AM|PM))\b/i);
+                    if (fallbackMatch) cleanTime = formatTime(fallbackMatch[1]);
+                }
+
+                // Skip past games
+                if (cleanDate !== 'TBA' && new Date(cleanDate) < today) continue;
+
+                const finalTitle = `Mizzou Men's Basketball VS ${cleanOpponent(opponent).toUpperCase()}`;
+                const dedupeKey = `${cleanDate}-${finalTitle}`;
+
+                if (seenMBB.has(dedupeKey)) continue;
+                seenMBB.add(dedupeKey);
+
+                venueData.push({
+                    venue: 'Mizzou Arena',
+                    title: finalTitle,
+                    date: cleanDate,
+                    time: cleanTime,
+                    type: 'NCAA MB'
+                });
+
+                console.log(`✅ Kept: ${finalTitle} on ${cleanDate} (${cleanTime}) [NCAA MB]`);
+
             } catch (err) {
                 console.log(`⚠️ Error processing Mizzou MBB card: ${err.message.substring(0, 45)}`);
             }
@@ -789,17 +829,20 @@ function formatTimeMWB(rawTime) {
     return formatted;
 }
 
+
+// MIZZOU ARENA WOMEN BASKETBALL MAIN FUNCTION
 async function scrapeMizzouWB(browser) {
     const context = await browser.newContext({
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
         viewport: { width: 1366, height: 768 }
     });
     const page = await context.newPage();
-    await setupTranscendKiller(page);
+    await setupTranscendKillerMWB(page);
 
     const venueData = [];
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+    const seenWBB = new Set();
 
     try {
         console.log(`\n🚀 Scraping Mizzou Women's Basketball Schedule...`);
@@ -817,71 +860,81 @@ async function scrapeMizzouWB(browser) {
         for (const card of gameCards) {
             try {
                 // 1. VENUE & LOCATION CHECK
-                const venueTypeLoc = card.locator('.schedule-event-date__venue-label').first();
-                const venueNameLoc = card.locator('.schedule-event-item__venue, .schedule-default-event__venue').first();
-                const locationLoc = card.locator('.schedule-event-item__location, .schedule-event-location').first();
+                const cardText = await card.innerText();
+                const isHome = cardText.toUpperCase().includes('MIZZOU ARENA') && cardText.toUpperCase().includes('COLUMBIA');
 
-                const venueType = (await venueTypeLoc.count() > 0) ? await venueTypeLoc.innerText() : "";
-                const venueName = (await venueNameLoc.count() > 0) ? await venueNameLoc.innerText() : "";
-                const locationText = (await locationLoc.count() > 0) ? await locationLoc.innerText() : "";
-                const fullLocation = `${venueType} ${venueName} ${locationText}`.toUpperCase();
+                if (!isHome) continue;
 
-                const isMizzouArena = fullLocation.includes('MIZZOU ARENA') && fullLocation.includes('COLUMBIA');
+                // 2. OPPONENT EXTRACTION
+                const opponentLoc = card.locator('.schedule-default-event__opponent-name, .schedule-default-event__name').first();
+                let opponent = (await opponentLoc.count() > 0) ? await opponentLoc.innerText() : "";
+                if (!opponent) continue;
 
-                if (isMizzouArena) {
-                    // 2. OPPONENT EXTRACTION
-                    const opponentLoc = card.locator('.schedule-default-event__opponent-name').first();
-                    let opponent = "";
-                    if (await opponentLoc.count() > 0) {
-                        opponent = await opponentLoc.innerText();
-                    } else {
-                        const fallbackNameLoc = card.locator('.schedule-default-event__name').first();
-                        if (await fallbackNameLoc.count() > 0) opponent = await fallbackNameLoc.innerText();
-                    }
-                    if (!opponent) continue;
-
-                    // 3. DATE EXTRACTION (Using dynamic academic year resolver)
-                    const dateLoc = card.locator('.schedule-event-date__month-day').first();
-                    let rawDate = "";
-                    if (await dateLoc.count() > 0) {
-                        rawDate = await dateLoc.innerText(); // e.g. "Oct 28"
-                    }
-
-                    const monthStr = rawDate.split(' ')[0].toLowerCase().substring(0, 3);
-                    const yearStr = getYearForMonth(monthStr);
-                    const cleanDate = formatDate(`${rawDate} ${yearStr}`);
-
-                    // 4. TIME EXTRACTION (Isolates valid time strings and ignores scores like "L 84-90")
-                    let rawTime = "TBA";
-                    const timeLoc = card.locator('.schedule-event-item-result__label, .schedule-event-date__time').first();
-                    if (await timeLoc.count() > 0) {
-                        const candidateTime = await timeLoc.innerText();
-                        const match = candidateTime.match(/(\d{1,2}(?::\d{2})?\s*(?:AM|PM|am|pm))/i);
-                        if (match) {
-                            rawTime = match[0];
-                        }
-                    }
-
-                    const cleanTime = formatTime(rawTime);
-
-                    // Skip past games
-                    const eventDate = new Date(cleanDate);
-                    if (cleanDate !== 'TBA' && eventDate < today) {
-                        continue;
-                    }
-
-                    const finalTitle = `MISSOURI VS ${cleanOpponent(opponent).toUpperCase()}`;
-
-                    venueData.push({
-                        venue: 'Mizzou Arena',
-                        title: finalTitle,
-                        date: cleanDate,
-                        time: cleanTime,
-                        type: 'NCAA WB'
-                    });
-
-                    console.log(`✅ Kept: ${finalTitle} on ${cleanDate} (${cleanTime})`);
+                // 3. ACCURATE DATE & ISO TIME EXTRACTION (Using datetime attribute on <time>)
+                let cleanDate = "TBA";
+                let dtAttr = "";
+                const timeTag = card.locator('time[datetime]').first();
+                if (await timeTag.count() > 0) {
+                    dtAttr = (await timeTag.getAttribute('datetime')) || "";
+                    if (dtAttr) cleanDate = dtAttr.split('T')[0];
                 }
+
+                // Fallback to text day if datetime attribute is missing
+                if (cleanDate === "TBA") {
+                    const dayLoc = card.locator('.schedule-event-date__day').first();
+                    if (await dayLoc.count() > 0) {
+                        const rawD = await dayLoc.innerText(); // e.g. "Nov 2"
+                        const mStr = rawD.split(' ')[0].toLowerCase().substring(0, 3);
+                        cleanDate = formatDate(`${rawD} ${getYearForMonth(mStr)}`);
+                    }
+                }
+
+                // 4. TIME EXTRACTION
+                // Target .schedule-event-item-result__label directly (do NOT combine with .schedule-event-date__time)
+                let cleanTime = "TBA";
+                const resultTimeLoc = card.locator('.schedule-event-item-result__label, .schedule-event-item-result strong').first();
+                if (await resultTimeLoc.count() > 0) {
+                    const rawTimeText = await resultTimeLoc.evaluate(el => el.textContent || '');
+                    const match = rawTimeText.replace(/\./g, '').match(/(\d{1,2}(?::\d{2})?\s*(?:AM|PM|am|pm))/i);
+                    if (match) cleanTime = formatTime(match[1]);
+                }
+
+                // Fallback A: Parse directly from <time datetime="2026-11-02T18:30:00.000-06:00">
+                if (cleanTime === "TBA" && dtAttr.includes('T')) {
+                    const timePart = dtAttr.split('T')[1].substring(0, 5); // "18:30"
+                    if (timePart && timePart !== "00:00") {
+                        let [h, m] = timePart.split(':').map(Number);
+                        const ampm = h >= 12 ? 'PM' : 'AM';
+                        h = h % 12 || 12;
+                        cleanTime = `${h}:${String(m).padStart(2, '0')}${ampm}`;
+                    }
+                }
+
+                // Fallback B: Match against full card text
+                if (cleanTime === "TBA") {
+                    const fallbackMatch = cardText.replace(/\./g, '').match(/\b(\d{1,2}(?::\d{2})?\s*(?:AM|PM))\b/i);
+                    if (fallbackMatch) cleanTime = formatTime(fallbackMatch[1]);
+                }
+
+                // Skip past games
+                if (cleanDate !== 'TBA' && new Date(cleanDate) < today) continue;
+
+                const finalTitle = `Mizzou Women's Basketball  VS ${cleanOpponent(opponent).toUpperCase()}`;
+                const dedupeKey = `${cleanDate}-${finalTitle}`;
+
+                if (seenWBB.has(dedupeKey)) continue;
+                seenWBB.add(dedupeKey);
+
+                venueData.push({
+                    venue: 'Mizzou Arena',
+                    title: finalTitle,
+                    date: cleanDate,
+                    time: cleanTime,
+                    type: 'NCAA WB'
+                });
+
+                console.log(`✅ Kept: ${finalTitle} on ${cleanDate} (${cleanTime}) [NCAA WB]`);
+
             } catch (err) {
                 console.log(`⚠️ Error processing Mizzou WBB card: ${err.message.substring(0, 45)}`);
             }
@@ -936,7 +989,7 @@ async function scrapeMizzouE(browser) {
         } catch (e) {}
 
         // Wait for event cards to load
-        await page.waitForSelector('a[data-testid="event-list-link"], div[class*="sc-eb703eab-0"], li[data-id]', { timeout: 15000 });
+        await page.waitForSelector('li[data-id], div[class*="sc-451c8dd0-2"], div[class*="sc-eb703eab-0"]', { timeout: 15000 });
 
         // Handle "Load More" pagination if present
         try {
@@ -950,26 +1003,46 @@ async function scrapeMizzouE(browser) {
 
         const events = await page.evaluate(() => {
             const results = [];
-            const items = document.querySelectorAll('li[data-id], div[class*="sc-eb703eab-0"]');
+            const items = document.querySelectorAll('li[data-id], div[class*="sc-451c8dd0-2"], div[class*="sc-eb703eab-0"]');
 
             items.forEach(item => {
-                const titleEl = item.querySelector('span[class*="ufMKn"], [class*="EventName"]');
-                let title = titleEl ? titleEl.innerText.trim() : "";
+                // 1. EXTRACT TITLE
+                let title = "";
 
-                const hiddenDateEl = item.querySelector('.VisuallyHidden-sc-8buqks-0 span');
-                const dateRaw = hiddenDateEl ? hiddenDateEl.innerText.trim() : "";
+                // Attempt A: Direct title container
+                const directTitle = item.querySelector('[class*="eMziwB"], [class*="hzNfZR"] span');
+                if (directTitle) {
+                    title = directTitle.innerText.trim();
+                }
 
-                const timeEl = item.querySelector('span[class*="bZWmdt"] span, span[class*="fCBXcp"] .VisuallyHidden-sc-8buqks-0 span');
-                const timeRaw = timeEl ? timeEl.innerText.trim() : "";
-
-                if (!title) {
-                    const fallbackLink = item.querySelector('a[data-testid="event-list-link"]');
-                    if (fallbackLink) {
-                        title = fallbackLink.innerText.split('\n')[0].trim();
+                // Attempt B: Accessible VisuallyHidden text on link or overflow button
+                if (!title || title.toLowerCase() === 'find tickets') {
+                    const hiddenTextEl = item.querySelector('button[aria-controls="eventOverflow"] .VisuallyHidden-sc-8buqks-0, a[data-testid="event-list-link"] .VisuallyHidden-sc-8buqks-0');
+                    if (hiddenTextEl) {
+                        const rawHidden = hiddenTextEl.innerText;
+                        title = rawHidden.split(',')[0].replace(/Open additional information for/i, '').trim();
                     }
                 }
 
-                if (title && (dateRaw || timeRaw)) {
+                // Attempt C: Legacy class fallbacks
+                if (!title || title.toLowerCase() === 'find tickets') {
+                    const legacyTitle = item.querySelector('span[class*="ufMKn"], [class*="EventName"]');
+                    if (legacyTitle) {
+                        title = legacyTitle.innerText.trim();
+                    }
+                }
+
+                if (!title || title.toLowerCase() === 'find tickets') return;
+
+                // 2. EXTRACT DATE
+                const hiddenDateEl = item.querySelector('.VisuallyHidden-sc-8buqks-0 span');
+                const dateRaw = hiddenDateEl ? hiddenDateEl.innerText.trim() : "";
+
+                // 3. EXTRACT TIME
+                const timeEl = item.querySelector('span[class*="bZWmdt"] span, span[class*="fCBXcp"] .VisuallyHidden-sc-8buqks-0 span');
+                const timeRaw = timeEl ? timeEl.innerText.trim() : "";
+
+                if (dateRaw || timeRaw) {
                     results.push({ dateRaw, timeRaw, title });
                 }
             });
@@ -983,17 +1056,29 @@ async function scrapeMizzouE(browser) {
         for (const ev of events) {
             if (!ev.title) continue;
 
-            const cleanTitle = ev.title.replace(/\s+/g, ' ').trim().toUpperCase();
-            const cleanDate = formatDate(ev.dateRaw);
-            const cleanTime = formatTime(ev.timeRaw);
-            const eventType = categorizeMizzouArena(cleanTitle);
+            let cleanTitle = ev.title.replace(/\s+/g, ' ').trim().toUpperCase();
+            
+            // Normalize TM title e.g. "2026-27 MIZZOU MEN'S BASKETBALL V CLEVELAND ST." -> "MISSOURI VS CLEVELAND STATE"
+            let eventType = categorizeMizzouArena(cleanTitle);
 
-            // Deduplication guard
-            const dedupeKey = `${cleanDate}-${cleanTime}-${cleanTitle}`;
+            if (cleanTitle.includes("MEN'S BASKETBALL V ") || cleanTitle.includes("MENS BASKETBALL V ")) {
+                const opp = cleanTitle.split(/MEN'?S BASKETBALL V /i)[1] || "";
+                cleanTitle = `MISSOURI VS ${cleanOpponent(opp).toUpperCase()}`;
+                eventType = 'NCAA MB';
+            } else if (cleanTitle.includes("WOMEN'S BASKETBALL V ") || cleanTitle.includes("WOMENS BASKETBALL V ")) {
+                const opp = cleanTitle.split(/WOMEN'?S BASKETBALL V /i)[1] || "";
+                cleanTitle = `MISSOURI VS ${cleanOpponent(opp).toUpperCase()}`;
+                eventType = 'NCAA WB';
+            }
+
+            const cleanDate = formatDate(ev.dateRaw);
+            const timeMatch = ev.timeRaw.match(/\d{1,2}(?::\d{2})?\s*(?:AM|PM|am|pm)/i);
+            const cleanTime = formatTime(timeMatch ? timeMatch[0] : (ev.timeRaw || 'TBA'));
+
+            const dedupeKey = `${cleanDate}-${cleanTitle}`;
             if (seenEvents.has(dedupeKey)) continue;
             seenEvents.add(dedupeKey);
 
-            // Filter past events
             if (cleanDate !== 'TBA' && new Date(cleanDate) < today) {
                 continue;
             }
@@ -1006,7 +1091,7 @@ async function scrapeMizzouE(browser) {
                 type: eventType
             });
 
-            console.log(`✅ Kept: ${cleanTitle} on ${cleanDate} (${cleanTime}) [${eventType}]`);
+            console.log(`✅ Kept TM: ${cleanTitle} on ${cleanDate} (${cleanTime}) [${eventType}]`);
         }
 
     } catch (e) {
@@ -1018,10 +1103,9 @@ async function scrapeMizzouE(browser) {
 
     return venueData;
 }
-
 // Providence Park Timber MAIN FUNCTIOn
 //date format
-function formatDatePT(dateStr) {
+function formatDatePT(dateStr, defaultYear = '2026') {
     if (!dateStr || dateStr === 'TBA') return dateStr;
 
     // Clean up the string but DO NOT remove slashes anymore
@@ -1032,7 +1116,7 @@ function formatDatePT(dateStr) {
     if (numericMatch) {
         const month = numericMatch[1].padStart(2, '0');
         const day = numericMatch[2].padStart(2, '0');
-        return `2026-${month}-${day}`;
+        return `${defaultYear}-${month}-${day}`;
     }
 
     // 2. Handle standard text format (e.g., March 7, 2026)
@@ -1046,7 +1130,7 @@ function formatDatePT(dateStr) {
     if (textMatch) {
         const month = monthMap[textMatch[1].toLowerCase().substring(0, 3)];
         const day = textMatch[2].padStart(2, '0');
-        const year = textMatch[3] || '2026';
+        const year = textMatch[3] || defaultYear;
         if (month) return `${year}-${month}-${day}`;
     }
 
@@ -1068,84 +1152,208 @@ function formatTimePT(timeStr) {
     return clean;
 }
 
+// ========================== PROVIDENCE PARK TIMBERS ==========================
+// Opens timbers.com/schedule, clicks the "2027" season button (double-clicks if needed),
+// confirms the page is on #competition=all&date=2027-01-01, STAYS there (no more page.goto),
+// and scrapes the home matches at Providence Park.
 async function scrapeProvidenceT(browser) {
-    const context = await browser.newContext();
+    const TARGET_YEAR = '2027';
+    const TARGET_HASH = `#competition=all&date=${TARGET_YEAR}-01-01`;
+
+    const context = await browser.newContext({
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+        viewport: { width: 1366, height: 900 }
+    });
     const page = await context.newPage();
     const venueDataPT = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const onTargetYear = () => page.url().includes(`date=${TARGET_YEAR}`);
+    const waitForTargetYear = async (ms) => {
+        try {
+            await page.waitForFunction(y => location.href.includes(`date=${y}`), TARGET_YEAR, { timeout: ms });
+            return true;
+        } catch { return false; }
+    };
 
     try {
-        console.log("Navigating to Providence Park...");
-        await page.goto('https://www.timbers.com/schedule/#competition=all&date=2026-02-19', { 
-            waitUntil: 'domcontentloaded',
-            timeout: 60000 
-        });
+        console.log("Navigating to Providence Park Timbers Schedule...");
+        await page.goto('https://www.timbers.com/schedule/', { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-        await page.waitForSelector('.mls-c-match-tile, [class*="match-tile"]', { timeout: 25000 }).catch(async e => {
-            console.log("Timed out waiting for tiles. Saving screenshot to debug...");
-            await page.screenshot({ path: 'providence_debug.png' });
-            throw e;
-        });
+        // Dismiss cookie banner so it can't block the click
+        try {
+            const cookieBtn = page.locator('#onetrust-accept-btn-handler');
+            if (await cookieBtn.isVisible({ timeout: 5000 })) await cookieBtn.click();
+        } catch (e) {}
 
+        // Wait for the season buttons (they hold the chevron icon) to render
+        await page.waitForSelector('.mls-o-buttons__svg', { timeout: 20000 }).catch(() => {});
+        await page.waitForTimeout(1500);
 
+        // ---- STEP 1: click the "2027" button: <button>2027<div class="mls-o-buttons__svg">…chevron…</div></button>
+        console.log(`🖱️ Clicking the ${TARGET_YEAR} season button...`);
+        const yearBtn = page.locator('button, a, [role="button"]')
+            .filter({ has: page.locator('.mls-o-buttons__svg') })
+            .filter({ hasText: new RegExp(`^\\s*${TARGET_YEAR}\\s*$`) })
+            .first();
+
+        if (await yearBtn.count() > 0) {
+            await yearBtn.scrollIntoViewIfNeeded().catch(() => {});
+            await yearBtn.click();
+            if (!(await waitForTargetYear(5000))) {
+                console.log("   ↪︎ Single click didn't switch the season, double-clicking...");
+                await yearBtn.dblclick();
+                await waitForTargetYear(5000);
+            }
+        }
+
+        // If the 2027 button wasn't visible, the season control may be a dropdown showing another
+        // year (e.g. "2026"). Open it and pick 2027 from the list.
+        if (!onTargetYear()) {
+            const seasonToggle = page.locator('button, [role="button"]')
+                .filter({ has: page.locator('.mls-o-buttons__svg') })
+                .filter({ hasText: /^\s*20\d{2}\s*$/ })
+                .first();
+            if (await seasonToggle.count() > 0) {
+                console.log("   ↪︎ Opening the season dropdown...");
+                await seasonToggle.click();
+                await page.waitForTimeout(800);
+                const option = page.locator('li, a, button, [role="option"]')
+                    .filter({ hasText: new RegExp(`^\\s*${TARGET_YEAR}\\s*$`) })
+                    .filter({ hasNot: page.locator('.mls-o-buttons__svg') });
+                const n = await option.count();
+                for (let i = 0; i < n; i++) {
+                    if (await option.nth(i).isVisible()) { await option.nth(i).click(); break; }
+                }
+                await waitForTargetYear(5000);
+            }
+        }
+
+        // Last resort: set the hash on the SAME page (no reload), which is what the button does
+        if (!onTargetYear()) {
+            console.log("   ↪︎ Button didn't switch the season, setting the 2027 hash directly...");
+            await page.evaluate(h => { window.location.hash = h; }, TARGET_HASH);
+            await waitForTargetYear(5000);
+        }
+
+        console.log(`📍 Now on: ${page.url()}`);
+
+        // ---- STEP 2: STAY on the 2027 page and let the match list load
+        await page.waitForTimeout(2500);
+        await page.waitForSelector('.mls-c-match-list__match', { timeout: 20000 }).catch(() => {});
+
+        // Scroll down so lazily-loaded rows render; stop once the count stops growing
+        let lastCount = -1;
+        for (let i = 0; i < 10; i++) {
+            const count = await page.locator('.mls-c-match-list__match').count();
+            if (count === lastCount) break;
+            lastCount = count;
+            await page.mouse.wheel(0, 4000);
+            await page.waitForTimeout(1000);
+        }
+
+        // If the site bounced back to another season, put it back on 2027 (same page, no reload)
+        if (!onTargetYear()) {
+            console.log("   ⚠️ Page left the 2027 view, switching back...");
+            await page.evaluate(h => { window.location.hash = h; }, TARGET_HASH);
+            await page.waitForTimeout(3000);
+        }
+
+        const rowCount = await page.locator('.mls-c-match-list__match').count();
+        console.log(`   ↪︎ ${rowCount} match rows on the ${TARGET_YEAR} page`);
+        if (rowCount === 0) {
+            await page.screenshot({ path: 'providence_debug.png', fullPage: true }).catch(() => {});
+            console.log("   ⚠️ No match rows found. Saved providence_debug.png");
+        }
+
+        // ---- STEP 3: scrape
         const matches = await page.evaluate(() => {
             const results = [];
-            const matchAnchors = document.querySelectorAll('a[href*="/matches/"]');
-
-            matchAnchors.forEach(anchor => {
-                const row = anchor.closest('.mls-c-match-list__match');
-                const dateText = row?.querySelector('.mls-c-status-stamp__status')?.innerText.trim() || "";
-                const dateEl = anchor.closest('.mls-c-match-list__match')?.querySelector('.mls-c-status-stamp__status');
-
+            document.querySelectorAll('.mls-c-match-list__match').forEach(row => {
+                const dateText = row.querySelector('.mls-c-status-stamp__status')?.innerText.trim() || "";
                 if (dateText.toLowerCase().includes('final')) return;
 
+                const anchor = row.querySelector('a[href*="/matches/"]');
+                const href = anchor ? anchor.href : "";
 
-                const infoBlock = anchor.closest('.mls-c-match-list__match')?.querySelector('.mls-c-match-list__match-info');
-                const competition = row?.querySelector('.mls-c-explainer-bar, .mls-c-match-list__match-info p')?.innerText.trim() || "";
-                const venue = row?.querySelector('.sc-iveFHk, .mls-c-match-list__match-info p:last-child')?.innerText.trim() || "";
+                // Match URLs carry the date as mm-dd-yyyy
+                let urlDate = "";
+                const m = href.match(/(\d{2})-(\d{2})-(\d{4})/);
+                if (m) urlDate = `${m[3]}-${m[1]}-${m[2]}`;
 
+                const infoParagraphs = row.querySelectorAll('.mls-c-match-list__match-info p');
+                const venue = infoParagraphs.length > 0 ? infoParagraphs[infoParagraphs.length - 1].innerText.trim() : "";
+                const competition = infoParagraphs.length > 1 ? infoParagraphs[0].innerText.trim() : "";
 
-                const home = anchor.querySelector('.--home .mls-c-club__shortname')?.innerText.trim() || "";
-                const away = anchor.querySelector('.--away .mls-c-club__shortname')?.innerText.trim() || "";
-                const time = anchor.querySelector('.mls-c-scorebug span')?.innerText.trim() || "TBA";
+                const home = anchor?.querySelector('.--home .mls-c-club__shortname, .--home .mls-c-club__name')?.innerText.trim() || "";
+                const away = anchor?.querySelector('.--away .mls-c-club__shortname, .--away .mls-c-club__name')?.innerText.trim() || "";
+                const time = anchor?.querySelector('.mls-c-scorebug span')?.innerText.trim() || "TBA";
 
-
-                if (venue.includes("Providence Park") || venue === "") {
-                    results.push({
-                        title: `${home} vs ${away}`,
-                        date: dateText,
-                        time: time,
-                        competition: competition
-                    });
-                }
+                results.push({ title: `${home} vs ${away}`, home, venue, urlDate, dateText, time, competition });
             });
             return results;
         });
 
+        let skippedAway = 0;
+        const seen = new Set();
 
         for (const m of matches) {
+            // Home matches at Providence Park only
+            const venueLower = m.venue.toLowerCase();
+            const isHome = venueLower.includes('providence park') ||
+                (!m.venue && m.home.toLowerCase().includes('timbers'));
+            if (!isHome) { skippedAway++; continue; }
+
             let type = 'Other';
             const comp = m.competition.toLowerCase();
             if (comp.includes('mls')) type = 'MLS';
             else if (comp.includes('nwsl')) type = 'NWSL';
             else if (comp.includes('next pro')) type = 'MLS Next Pro';
 
+            // Date: URL slug first; otherwise the row text, read as a 2027 date
+            let cleanDate = m.urlDate;
+            if (!cleanDate) {
+                const slash = m.dateText.match(/(\d{1,2})\/(\d{1,2})/);
+                if (slash) {
+                    cleanDate = `${TARGET_YEAR}-${slash[1].padStart(2, '0')}-${slash[2].padStart(2, '0')}`;
+                } else {
+                    cleanDate = formatDatePT(m.dateText, TARGET_YEAR);
+                }
+            }
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(cleanDate)) cleanDate = 'TBA';
+
+            if (cleanDate !== 'TBA') {
+                const [y, mo, d] = cleanDate.split('-').map(Number);
+                if (new Date(y, mo - 1, d) < today) continue;
+            }
+
+            const finalTitle = toTitleCase(m.title);
+            const dedupeKey = `${cleanDate}-${finalTitle}`;
+            if (seen.has(dedupeKey)) continue;
+            seen.add(dedupeKey);
+
             venueDataPT.push({
                 venue: 'Providence Park',
-                title: m.title,
-                date: formatDatePT(m.date),
-                time: formatTimePT(m.time),
+                title: finalTitle,
+                date: cleanDate,
+                time: formatTimeProvidence(m.time),
                 type: type
             });
+            console.log(`✅ Kept: ${finalTitle} on ${cleanDate} (${formatTimeProvidence(m.time)}) [${type}]`);
         }
 
-        console.log(`Successfully captured ${venueDataPT.length} home matches.`);
+        console.log(`🏁 Providence Park Timbers: ${venueDataPT.length} home matches kept, ${skippedAway} away matches skipped.`);
 
-        } catch (e) { console.log(`Providence Park Timbers failed: ${e.message}`); }
+    } catch (e) {
+        console.log(`Providence Park Timbers failed: ${e.message}`);
+        await page.screenshot({ path: 'providence_debug.png', fullPage: true }).catch(() => {});
+    } finally {
         await page.close();
         await context.close();
-        return venueDataPT;
-
     }
+    return venueDataPT;
+}
 
 // Providence Park Thorns MAIN FUNCTION
 function formatDateThorns(dateStr) {
@@ -1188,7 +1396,7 @@ async function scrapeProvidenceThorns(browser) {
     today.setHours(0, 0, 0, 0);
 
     try {
-        console.log(`\n🚀 Scraping Portland Thorns Schedule (Providence Park)...`);
+        console.log(`\n🚀 Scraping Providence Park...`);
         await page.goto('https://www.thorns.com/schedule', { 
             waitUntil: 'domcontentloaded',
             timeout: 30000 
@@ -1332,7 +1540,34 @@ function formatDateSD(dateStr) {
     return dateStr;
 }
 
-function formatTimeSD(timeStr) {
+function adjustShellTime(timeStr) {
+    if (!timeStr || timeStr === 'TBA') return 'TBA';
+    // Example time shift adjustment if parsing 4:00 PM down to 2:00 PM CT
+    const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+    if (match) {
+        let hrs = parseInt(match[1]);
+        const mins = match[2];
+        const ampm = match[3].toUpperCase();
+        
+        // Adjust hours (-2 hours shift as specified)
+        hrs = hrs - 2;
+        if (hrs <= 0) hrs += 12; // Simple 12-hr wrap safeguard
+        
+        return `${hrs}:${mins}${ampm}`;
+    }
+    return timeStr;
+}
+
+function formatTimeProvidence(timeStr) {
+    if (!timeStr || timeStr === 'TBA') return timeStr;
+    let clean = timeStr.replace(/\s+/g, '').toUpperCase();
+    if (/^\d+(AM|PM)$/.test(clean)) {
+        clean = clean.replace(/(\d+)/, '$1:00');
+    }
+    return adjustShellTime(clean);
+}
+
+function formatTimeSDNormal(timeStr) {
     if (!timeStr || timeStr === 'TBA') return timeStr;
     let clean = timeStr.replace(/\s+/g, '').toUpperCase();
     if (/^\d+(AM|PM)$/.test(clean)) {
@@ -1340,6 +1575,7 @@ function formatTimeSD(timeStr) {
     }
     return clean;
 }
+
 
 async function scrapeShellDynamo(browser)  {
     const context = await browser.newContext();
@@ -1393,7 +1629,7 @@ async function scrapeShellDynamo(browser)  {
                 venue: 'Shell Energy Stadium',
                 title: ev.title,
                 date: formatDateSD(ev.rawDate),
-                time: formatTimeSD(ev.rawTime.replace(/\./g, '')), // Remove periods from p.m.
+                time: formatTimeSDNormal(ev.rawTime.replace(/\./g, '')), // Remove periods from p.m.
                 type: type
             });
         }
@@ -1531,57 +1767,53 @@ function formatTimeSU(timeStr) {
 }
 
 async function scrapeSubaruUnion(browser) {
+    const NEXT_YEAR = '2027';
+    const NEXT_YEAR_HASH = `#competition=all&date=${NEXT_YEAR}-01-01`;
+
     const context = await browser.newContext({
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-        viewport: { width: 1366, height: 768 }
+        viewport: { width: 1366, height: 768 },
+        // The site shows kickoff times in the browser's own time zone (your machine is on CT).
+        // Running this browser in Eastern Time makes the site render ET times, DST included.
+        timezoneId: 'America/New_York'
     });
     const page = await context.newPage();
     const venueData = [];
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const todayISO = today.toISOString().split('T')[0];
+    const todayISO = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
-    try {
-        console.log(`\n🚀 Scraping Subaru Park Philadelphia Union (Anchored to ${todayISO})...`);
-        await page.goto(`https://www.philadelphiaunion.com/schedule/#competition=all&date=${todayISO}`, { 
-            waitUntil: 'domcontentloaded',
-            timeout: 30000 
-        });
-
-        // Dismiss marketing and cookie popups
+    const onYear = (y) => page.url().includes(`date=${y}`);
+    const waitForYear = async (y, ms) => {
         try {
-            const closePopup = page.locator('#closeIconContainer, [data-testid="closeIcon"], button[aria-label="Close"]').first();
-            if (await closePopup.isVisible({ timeout: 4000 })) {
-                await closePopup.click();
-            }
-        } catch (e) {}
+            await page.waitForFunction(yr => location.href.includes(`date=${yr}`), y, { timeout: ms });
+            return true;
+        } catch { return false; }
+    };
 
-        try {
-            const cookieBtn = page.locator('#onetrust-accept-btn-handler');
-            if (await cookieBtn.isVisible({ timeout: 4000 })) {
-                await cookieBtn.click();
-            }
-        } catch (e) {}
-
-        await page.waitForSelector('.mls-c-match-list__match, .mls-c-match-tile', { timeout: 15000 });
+    // Load every row on the current view, then read it
+    const readSchedule = async () => {
+        await page.waitForSelector('.mls-c-match-list__match, .mls-c-match-tile', { timeout: 15000 }).catch(() => {});
         await page.waitForTimeout(2000);
 
-        const rawMatches = await page.evaluate(() => {
-            const results = [];
-            const matchCards = document.querySelectorAll('.mls-c-match-list__match');
+        let lastCount = -1;
+        for (let i = 0; i < 10; i++) {
+            const count = await page.locator('.mls-c-match-list__match').count();
+            if (count === lastCount) break;
+            lastCount = count;
+            await page.mouse.wheel(0, 4000);
+            await page.waitForTimeout(1000);
+        }
 
-            matchCards.forEach(row => {
+        return page.evaluate(() => {
+            const results = [];
+            document.querySelectorAll('.mls-c-match-list__match').forEach(row => {
                 const matchLink = row.querySelector('a[href*="/matches/"]');
                 const href = matchLink ? matchLink.href : "";
 
                 let urlDate = "";
                 const urlDateMatch = href.match(/(\d{2})-(\d{2})-(\d{4})/);
-                if (urlDateMatch) {
-                    const month = urlDateMatch[1];
-                    const day = urlDateMatch[2];
-                    const year = urlDateMatch[3];
-                    urlDate = `${year}-${month}-${day}`;
-                }
+                if (urlDateMatch) urlDate = `${urlDateMatch[3]}-${urlDateMatch[1]}-${urlDateMatch[2]}`;
 
                 const statusText = row.querySelector('.mls-c-status-stamp__status')?.innerText.trim() || "";
                 const home = row.querySelector('.--home .mls-c-club__shortname, .--home .mls-c-club__name')?.innerText.trim() || "Philadelphia";
@@ -1593,47 +1825,37 @@ async function scrapeSubaruUnion(browser) {
                 const infoParagraphs = row.querySelectorAll('.mls-c-match-list__match-info p');
                 let competition = "";
                 let venue = "";
-
                 if (infoParagraphs.length > 0) {
                     competition = infoParagraphs[0].innerText.trim();
                     venue = infoParagraphs[infoParagraphs.length - 1].innerText.trim();
                 }
 
-                if (href) {
-                    results.push({
-                        urlDate,
-                        statusText,
-                        home,
-                        away,
-                        time,
-                        competition,
-                        venue
-                    });
-                }
+                if (href) results.push({ urlDate, statusText, home, away, time, competition, venue });
             });
-
             return results;
         });
+    };
 
-        console.log(`📋 Found ${rawMatches.length} total fixtures on Union schedule.`);
-        const seenMatches = new Set();
-
+    const seenMatches = new Set();
+    const processMatches = (rawMatches, fallbackYear) => {
         for (const m of rawMatches) {
             const venueLower = m.venue.toLowerCase();
-            const isSubaruPark = venueLower.includes('subaru park') || 
+            const isSubaruPark = venueLower.includes('subaru park') ||
                                  (m.home.toLowerCase().includes('philadelphia') && !venueLower.includes('stadium') && !venueLower.includes('field'));
-
             if (!isSubaruPark) continue;
 
             let cleanDate = m.urlDate;
-            if (!cleanDate && m.statusText.includes('/')) {
-                cleanDate = formatDate(m.statusText);
+            if (!cleanDate) {
+                const slash = m.statusText.match(/(\d{1,2})\/(\d{1,2})/);
+                if (slash) cleanDate = `${fallbackYear}-${slash[1].padStart(2, '0')}-${slash[2].padStart(2, '0')}`;
             }
 
             const cleanTime = formatTime(m.time);
 
-            if (cleanDate && cleanDate !== 'TBA' && new Date(cleanDate) < today) {
-                continue;
+            // Compare in local time (new Date('yyyy-mm-dd') is UTC and drops today's match)
+            if (cleanDate && /^\d{4}-\d{2}-\d{2}$/.test(cleanDate)) {
+                const [y, mo, d] = cleanDate.split('-').map(Number);
+                if (new Date(y, mo - 1, d) < today) continue;
             }
 
             let type = 'Other';
@@ -1646,9 +1868,8 @@ async function scrapeSubaruUnion(browser) {
                 type = 'Concert';
             }
 
-            const title = `${m.home.toUpperCase()} VS. ${m.away.toUpperCase()}`;
-            const dedupeKey = `${cleanDate}-${cleanTime}-${title}`;
-
+            const title = `${toTitleCase(m.home)} vs. ${toTitleCase(m.away)}`;
+            const dedupeKey = `${cleanDate}-${title}`;
             if (seenMatches.has(dedupeKey)) continue;
             seenMatches.add(dedupeKey);
 
@@ -1659,9 +1880,100 @@ async function scrapeSubaruUnion(browser) {
                 time: cleanTime,
                 type: type
             });
-
-            console.log(`✅ Kept: ${title} on ${cleanDate} (${cleanTime}) [${type}]`);
+            console.log(`✅ Kept: ${title} on ${cleanDate} (${cleanTime} ET) [${type}]`);
         }
+    };
+
+    try {
+        // ---------- PART 1: rest of the current season (anchored to today) ----------
+        console.log(`\n🚀 Scraping Subaru Park Philadelphia Union (Anchored to ${todayISO}, times in ET)...`);
+        await page.goto(`https://www.philadelphiaunion.com/schedule/#competition=all&date=${todayISO}`, {
+            waitUntil: 'domcontentloaded',
+            timeout: 30000
+        });
+
+        // Dismiss marketing and cookie popups
+        try {
+            const closePopup = page.locator('#closeIconContainer, [data-testid="closeIcon"], button[aria-label="Close"]').first();
+            if (await closePopup.isVisible({ timeout: 4000 })) await closePopup.click();
+        } catch (e) {}
+        try {
+            const cookieBtn = page.locator('#onetrust-accept-btn-handler');
+            if (await cookieBtn.isVisible({ timeout: 4000 })) await cookieBtn.click();
+        } catch (e) {}
+
+        const currentMatches = await readSchedule();
+        console.log(`📋 Found ${currentMatches.length} fixtures on the current Union schedule.`);
+        processMatches(currentMatches, String(today.getFullYear()));
+
+        // ---------- PART 2: click the 2027 button, STAY on that page, scrape ----------
+        console.log(`🖱️ Clicking the ${NEXT_YEAR} season button...`);
+        await page.mouse.wheel(0, -20000);
+        await page.waitForTimeout(800);
+
+        const yearBtn = page.locator('button, a, [role="button"]')
+            .filter({ has: page.locator('.mls-o-buttons__svg') })
+            .filter({ hasText: new RegExp(`^\\s*${NEXT_YEAR}\\s*$`) })
+            .first();
+
+        if (await yearBtn.count() > 0) {
+            await yearBtn.scrollIntoViewIfNeeded().catch(() => {});
+            await yearBtn.click();
+            if (!(await waitForYear(NEXT_YEAR, 5000))) {
+                console.log("   ↪︎ Single click didn't switch the season, double-clicking...");
+                await yearBtn.dblclick();
+                await waitForYear(NEXT_YEAR, 5000);
+            }
+        }
+
+        // Season control may be a dropdown showing another year: open it and pick 2027
+        if (!onYear(NEXT_YEAR)) {
+            const seasonToggle = page.locator('button, [role="button"]')
+                .filter({ has: page.locator('.mls-o-buttons__svg') })
+                .filter({ hasText: /^\s*20\d{2}\s*$/ })
+                .first();
+            if (await seasonToggle.count() > 0) {
+                console.log("   ↪︎ Opening the season dropdown...");
+                await seasonToggle.click();
+                await page.waitForTimeout(800);
+                const option = page.locator('li, a, button, [role="option"]')
+                    .filter({ hasText: new RegExp(`^\\s*${NEXT_YEAR}\\s*$`) })
+                    .filter({ hasNot: page.locator('.mls-o-buttons__svg') });
+                const n = await option.count();
+                for (let i = 0; i < n; i++) {
+                    if (await option.nth(i).isVisible()) { await option.nth(i).click(); break; }
+                }
+                await waitForYear(NEXT_YEAR, 5000);
+            }
+        }
+
+        // Last resort: set the hash on the SAME page (no reload)
+        if (!onYear(NEXT_YEAR)) {
+            console.log("   ↪︎ Button didn't switch the season, setting the 2027 hash directly...");
+            await page.evaluate(h => { window.location.hash = h; }, NEXT_YEAR_HASH);
+            await waitForYear(NEXT_YEAR, 5000);
+        }
+
+        console.log(`📍 Now on: ${page.url()}`);
+
+        const nextMatches = await readSchedule();
+
+        // If the site bounced back to another season, switch back and read again
+        let finalNext = nextMatches;
+        if (!onYear(NEXT_YEAR)) {
+            console.log("   ⚠️ Page left the 2027 view, switching back...");
+            await page.evaluate(h => { window.location.hash = h; }, NEXT_YEAR_HASH);
+            finalNext = await readSchedule();
+        }
+
+        console.log(`📋 Found ${finalNext.length} fixtures on the ${NEXT_YEAR} Union schedule.`);
+        if (finalNext.length === 0) {
+            await page.screenshot({ path: 'subaru_debug.png', fullPage: true }).catch(() => {});
+            console.log("   ⚠️ No 2027 rows found. Saved subaru_debug.png");
+        }
+        processMatches(finalNext, NEXT_YEAR);
+
+        console.log(`🏁 Subaru Park Union: ${venueData.length} home matches kept (2026 + 2027).`);
 
     } catch (err) {
         console.error("❌ Subaru Park Union Failed:", err.message);
@@ -1776,7 +2088,7 @@ async function scrapeSubaruPPL(browser) {
 
                     if (t1 && t2) {
                         results.push({
-                            title: `${t1.toUpperCase()} VS. ${t2.toUpperCase()}`,
+                            title: `${toTitleCase(t1)} vs. ${toTitleCase(t2)}`,
                             dateStr: dateHeader,
                             timeStr: rawTime,
                             league: league
@@ -1896,7 +2208,7 @@ async function scrapeDSG(browser) {
 
         venueData = rawEvents.map(ev => ({
             venue: "Dicks Sporting Goods Park",
-            title: ev.title.toUpperCase(),
+            title: toTitleCase(ev.title),
             date: formatDate(ev.rawDate),
             time: formatTime(ev.rawTime),
             type: categorizeDSG(ev.title)
@@ -1924,7 +2236,7 @@ async function scrapeDSG(browser) {
         scrapeXfinityE(browser),
         scrapeMizzouMB(browser),
         scrapeMizzouWB(browser),
-        scrapeMizzouE(browser),
+        //scrapeMizzouE(browser),
         scrapeProvidenceT(browser),
         scrapeProvidenceThorns(browser),
         scrapeShellDynamo(browser),
@@ -1941,7 +2253,7 @@ async function scrapeDSG(browser) {
     const seenGlobal = new Set();
 
     for (const item of allData) {
-    const key = `${item.venue}|${item.title}|${item.date}`;
+    const key = `${item.venue}|${item.title}|${item.date}|${item.type}`;
     if (!seenGlobal.has(key)) {
         seenGlobal.add(key);
         uniqueData.push(item);

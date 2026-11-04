@@ -26,10 +26,9 @@ crawler-3.js -> calendar-3.csv
 21. Shell Energy Stadium
 22. Subaru Park
 23. Dicks Sporting Goods
-24. Enmarket Arena
 
 crawler-4.js -> calendar-4.csv
-1. XFINITY 
-2. Enmarket
-3. LSU - PMAC
-4. Allianz Field
+1. Enmarket 
+2. LSU - PMAC
+3. Allianz Field 
+4. Maryland - Xfinity Center

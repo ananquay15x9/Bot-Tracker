@@ -120,6 +120,66 @@ async function setupTranscendKiller(page) {
     });
 }
 
+
+// Clean function for Auburn opponent names
+function toTitleCase(str) {
+    if (!str) return '';
+    return str
+        .toLowerCase()
+        .split(' ')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+}
+
+function cleanAuburnOpponent(rawText) {
+    if (!rawText) return "Opponent TBD";
+
+    let clean = rawText
+        .replace(/opens\s+in\s+a\s+new\s+window/gi, '')
+        .replace(/#\d+/g, '')
+        .replace(/^(vs\.|at)/i, '')
+        .replace(/\b(Wear Orange|Wear White|Wear Navy|All Auburn|Holiday Bleacher Game|Aubie Bobblehead Night|Tipoff on the Plains|Comedy Night for the Troops|Military Appreciation|Senior Day|Alumni Night|Preview Meet|Exhibition|Scrimmage)\b/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    return toTitleCase(clean);
+}
+
+function parseAuburnDate(rawDateStr, fallbackMonth = '') {
+    if (!rawDateStr || rawDateStr === 'TBA') return 'TBA';
+
+    // Normalize whitespace and newlines (e.g. "Dec\n18" -> "Dec 18")
+    let cleaned = rawDateStr.replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim();
+    cleaned = cleaned.replace(/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*\.?/i, '').trim();
+
+    const monthMap = {
+        'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04',
+        'may': '05', 'jun': '06', 'jul': '07', 'aug': '08',
+        'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12'
+    };
+
+    // If it's just a number like "18", combine it with the fallback month if available
+    if (/^\d{1,2}$/.test(cleaned) && fallbackMonth) {
+        cleaned = `${fallbackMonth} ${cleaned}`;
+    }
+
+    const match = cleaned.match(/([A-Za-z]{3,9})\.?\s*(\d{1,2})/i);
+    if (match) {
+        const monthKey = match[1].toLowerCase().substring(0, 3);
+        const month = monthMap[monthKey];
+        const day = match[2].padStart(2, '0');
+        
+        // Sep - Dec are in 2026; Jan - Apr are in 2027
+        const year = (['oct', 'nov', 'dec', 'sep', 'aug'].includes(monthKey)) ? '2026' : '2027';
+
+        if (month) {
+            return `${year}-${month}-${day}`;
+        }
+    }
+
+    return formatDate(cleaned);
+}
+
 //========================================
 // CATEGORIZATION FUNCTIONS
 
@@ -194,6 +254,34 @@ function categorizeAndAssignTime(title) {
     return { type: 'Other', time: 'TBA' };
 }
 
+
+// Converts browser-localized Central Time to venue Mountain Time (-1 hour)
+function convertCentralToMountain(timeStr) {
+    if (!timeStr || timeStr.toUpperCase().includes('TBA')) return 'TBA';
+
+    let clean = timeStr.toUpperCase().replace(/\./g, '').trim();
+    const match = clean.match(/(\d{1,2})(?::(\d{2}))?\s*(AM|PM)/i);
+    if (!match) return timeStr;
+
+    let hours = parseInt(match[1], 10);
+    const minutes = match[2] || '00';
+    const ampm = match[3].toUpperCase();
+
+    // Convert to 24-hour format
+    if (ampm === 'PM' && hours !== 12) hours += 12;
+    if (ampm === 'AM' && hours === 12) hours = 0;
+
+    // Step back -1 hour (CT -> MT)
+    hours = (hours - 1 + 24) % 24;
+
+    // Convert back to 12-hour format
+    const newAmpm = hours >= 12 ? 'PM' : 'AM';
+    let newHours = hours % 12;
+    if (newHours === 0) newHours = 12;
+
+    return `${newHours}:${minutes}${newAmpm}`;
+}
+
 // ======================================================================================
 // VENUE SCRAPERS
 
@@ -205,25 +293,25 @@ async function scrapeJPJ(browser) {
     today.setHours(0, 0, 0, 0);
 
     try {
-        console.log(`\nScraping John Paul Jones Arena...`);
+        console.log(`\n⚔️ Scraping John Paul Jones Arena...`);
         await setupTranscendKiller(page);
 
         await page.goto('https://virginiasports.com/all-sports-schedule?type=home', { 
-            waitUntil: 'networkidle', 
+            waitUntil: 'domcontentloaded', 
             timeout: 45000 
         });
 
-        // Dismiss any cookie overlays
+        // Dismiss cookie overlays
         try {
             const cookieBtn = page.locator('.iubenda-cs-accept-btn, button:has-text("Accept")').first();
             if (await cookieBtn.isVisible({ timeout: 3000 })) await cookieBtn.click();
             await page.addStyleTag({ content: '#iubenda-cs-banner, .iubenda-cs-default, .iubenda-cs-overlay { display: none !important; }' });
         } catch (e) {}
 
-        const cardSelector = '.schedule-event-item, .c-schedule__item, tr.c-schedule-table__row';
+        const cardSelector = '.schedule-event-item';
         await page.waitForSelector(cardSelector, { timeout: 15000 }).catch(() => {});
 
-        // Load more rows
+        // Load more rows if pagination exists
         let hasMore = true;
         let attempts = 0;
         while (hasMore && attempts < 10) {
@@ -239,39 +327,64 @@ async function scrapeJPJ(browser) {
         }
 
         const rows = await page.locator(cardSelector).all();
-        console.log(`Processing ${rows.length} JPJ schedule rows...`);
+        console.log(`📋 Found ${rows.length} JPJ schedule rows. Filtering for home arena sports...`);
+
+        const seenEvents = new Set();
 
         for (const row of rows) {
             try {
-                // 1. Sport check (Basketball & Wrestling play in JPJ Arena)
-                const sportLoc = row.locator('.schedule-event-item-links__sport-name, .schedule-default-event__sport, .sport-name').first();
-                const sportClean = (await sportLoc.count() > 0) ? (await sportLoc.innerText()).trim() : "";
+                // 1. Location & Venue Verification
+                const locText = (await row.locator('.schedule-event-location').first().innerText().catch(() => "")).trim();
+                const venueText = (await row.locator('.schedule-event-item__venue').first().innerText().catch(() => "")).trim();
+                const combinedLoc = `${locText} ${venueText}`.toUpperCase();
+
+                // Must be a home event in Charlottesville
+                if (!combinedLoc.includes('CHARLOTTESVILLE') && !combinedLoc.includes('HOME')) {
+                    continue;
+                }
+
+                // 2. Sport Check (Basketball & Wrestling take place at JPJ)
+                const sportLoc = row.locator('.schedule-event-item-links__sport-name, .schedule-default-event__sport, .sport-name, a[href*="/sports/"]').first();
+                let rawSport = (await sportLoc.count() > 0) ? (await sportLoc.innerText()).trim() : "";
+
+                const rowAllText = await row.innerText();
+                if (!rawSport) {
+                    if (rowAllText.toLowerCase().includes("women's basketball")) rawSport = "Women's Basketball";
+                    else if (rowAllText.toLowerCase().includes("men's basketball")) rawSport = "Men's Basketball";
+                    else if (rowAllText.toLowerCase().includes("wrestling")) rawSport = "Wrestling";
+                }
 
                 const jpjSports = ["Men's Basketball", "Women's Basketball", "Wrestling", "MBB", "WBB"];
-                const isJPJSport = jpjSports.some(s => sportClean.toLowerCase().includes(s.toLowerCase()));
+                const isJPJSport = jpjSports.some(s => rawSport.toLowerCase().includes(s.toLowerCase()));
 
-                if (!isJPJSport && sportClean !== "") continue;
+                if (!isJPJSport && rawSport !== "") continue;
 
-                // 2. Opponent
-                const opponentLoc = row.locator('.schedule-default-event__opponent-name, .schedule-default-event__name, .opponent-name').first();
-                const opponent = (await opponentLoc.count() > 0) ? await opponentLoc.innerText() : "Opponent TBD";
+                // 3. Opponent Extraction
+                const opponentLoc = row.locator('.schedule-default-event__name, .schedule-default-event__opponent-name').first();
+                let rawOpponent = (await opponentLoc.count() > 0) ? (await opponentLoc.innerText()).trim() : "";
+                if (!rawOpponent) continue;
 
-                // 3. Date (Using dynamic getYearForMonth: Fall = 2026, Spring = 2027)
-                const dateLoc = row.locator('.schedule-event-date__month-day, .event-date, time').first();
-                if (await dateLoc.count() === 0) continue;
-                const dateVal = (await dateLoc.innerText()).trim();
+                const opponent = cleanOpponent(rawOpponent);
 
-                const monthStr = dateVal.toLowerCase().substring(0, 3);
-                const year = getYearForMonth(monthStr);
-                const cleanDate = formatDate(`${dateVal} ${year}`);
+                // 4. Date Extraction: Target .schedule-event-date__month-day (NOT .schedule-event-date__weekday)
+                const monthDayLoc = row.locator('.schedule-event-date__month-day').first();
+                if (await monthDayLoc.count() === 0) continue;
+                const rawMonthDay = (await monthDayLoc.innerText()).trim(); // e.g. "Nov 2"
 
-                // 4. Time
-                let timeVal = 'TBA';
-                const timeLabel = row.locator('.schedule-event-item-result__label, .schedule-event-date__time, .event-time').first();
+                const monthKey = rawMonthDay.split(' ')[0].toLowerCase().substring(0, 3);
+                // Aug - Dec = 2026, Jan - Jul = 2027
+                const year = (['aug', 'sep', 'oct', 'nov', 'dec'].includes(monthKey)) ? '2026' : '2027';
+                const cleanDate = formatDate(`${rawMonthDay} ${year}`);
+
+                // 5. Time Extraction (Preserves "6:00 PM EST")
+                let cleanTime = "TBA";
+                const timeLabel = row.locator('.schedule-event-item-result__label, strong:has-text("PM"), strong:has-text("AM")').first();
                 if (await timeLabel.count() > 0) {
-                    const rawTime = await timeLabel.innerText();
-                    const match = rawTime.match(/(\d{1,2}(?::\d{2})?\s*(?:AM|PM|am|pm))/i);
-                    if (match) timeVal = formatTime(match[1]);
+                    const timeText = (await timeLabel.innerText()).trim();
+                    const match = timeText.match(/(\d{1,2}(?::\d{2})?\s*(?:AM|PM|am|pm)(?:\s+[A-Z]{2,4})?)/i);
+                    if (match) {
+                        cleanTime = match[1].replace(/\s+/g, ' ').toUpperCase();
+                    }
                 }
 
                 // Filter past events
@@ -279,21 +392,48 @@ async function scrapeJPJ(browser) {
                     continue;
                 }
 
-                const finalTitle = `VIRGINIA VS. ${cleanOpponent(opponent).toUpperCase()} (${sportClean.toUpperCase() || 'EVENT'})`;
+                // Determine sport category & clean title
+                let eventType = 'Other';
+                let sportTag = "";
+
+                if (rawSport.toLowerCase().includes("women") || rawSport.toLowerCase().includes("wbb")) {
+                    eventType = 'NCAA WB';
+                    sportTag = "(Women's Basketball)";
+                } else if (rawSport.toLowerCase().includes("men") || rawSport.toLowerCase().includes("mbb")) {
+                    eventType = 'NCAA MB';
+                    sportTag = "(Men's Basketball)";
+                } else if (rawSport.toLowerCase().includes("wrestling")) {
+                    eventType = 'Wrestling';
+                    sportTag = "(Wrestling)";
+                }
+
+                const finalTitle = `Virginia vs. ${opponent} ${sportTag}`.trim();
+                const dedupeKey = `${cleanDate}-${finalTitle}`;
+
+                if (seenEvents.has(dedupeKey)) continue;
+                seenEvents.add(dedupeKey);
 
                 venueData.push({
                     venue: 'Virginia - John Paul Jones',
                     title: finalTitle,
                     date: cleanDate,
-                    time: timeVal,
-                    type: categorizeJBJ(sportClean, opponent)
+                    time: cleanTime,
+                    type: eventType
                 });
 
-                console.log(`✅ Kept: ${finalTitle} on ${cleanDate} (${timeVal})`);
-            } catch (e) { continue; }
+                console.log(`✅ Kept: ${finalTitle} on ${cleanDate} (${cleanTime}) [${eventType}]`);
+
+            } catch (err) {
+                continue;
+            }
         }
-    } catch (e) { console.log(`❌ John Paul Jones Arena failed: ${e.message}`); }
-    await page.close();
+
+    } catch (e) { 
+        console.log(`❌ John Paul Jones Arena failed: ${e.message}`); 
+    } finally {
+        await page.close();
+    }
+
     return venueData;
 }
 
@@ -467,22 +607,23 @@ async function scrapeBJC(browser) {
     return venueData;
 }
 
-// 4. Real Salt Lake (America First Field)
+
+
+// 4. Real Salt Lake (America First Field - Men's MLS)
 async function scrapeRSL(browser) {
     const page = await browser.newPage();
     const venueData = [];
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const todayISO = today.toISOString().split('T')[0];
 
     try {
-        console.log(`\n🚀 Scraping Real Salt Lake (Anchored to ${todayISO})...`);
-        await page.goto(`https://www.rsl.com/schedule/#competition=all&date=${todayISO}`, {
+        console.log(`\n🚀 Scraping Real Salt Lake Schedule (America First Field)...`);
+        await page.goto('https://www.rsl.com/schedule/#competition=all', {
             waitUntil: 'domcontentloaded',
             timeout: 30000
         });
 
-        await page.waitForSelector('.mls-c-match-list__match, .mls-c-match-list__match-container', { timeout: 15000 });
+        await page.waitForSelector('.mls-c-match-list__match, .mls-c-match-tile', { timeout: 15000 });
         await page.waitForTimeout(2000);
 
         const rawMatches = await page.evaluate(() => {
@@ -502,15 +643,17 @@ async function scrapeRSL(browser) {
                     urlDate = `${year}-${month}-${day}`;
                 }
 
+                const statusEl = card.querySelector('.mls-c-status-stamp__status');
+                const statusText = statusEl ? statusEl.innerText.trim() : "";
+
                 const homeClubEl = card.querySelector('.mls-c-club.--home .mls-c-club__shortname, .mls-c-club.--home .mls-c-club__name');
                 const awayClubEl = card.querySelector('.mls-c-club.--away .mls-c-club__shortname, .mls-c-club.--away .mls-c-club__name');
                 
-                const homeTeam = homeClubEl ? homeClubEl.innerText.trim() : "Real Salt Lake";
-                const awayTeam = awayClubEl ? awayClubEl.innerText.trim() : "Opponent TBD";
-                const statusEl = card.querySelector('.mls-c-status-stamp__status');
-                const statusText = statusEl ? statusEl.innerText.trim() : "";
-                const scorebugEl = card.querySelector('.mls-c-scorebug');
-                const scorebugText = scorebugEl ? scorebugEl.innerText.trim() : "";
+                const homeTeam = homeClubEl ? homeClubEl.innerText.trim() : "";
+                const awayTeam = awayClubEl ? awayClubEl.innerText.trim() : "";
+
+                const scorebugEl = card.querySelector('.mls-c-scorebug span, [class*="scorebug"] span');
+                const rawTime = scorebugEl ? scorebugEl.innerText.trim() : "TBA";
 
                 const infoParagraphs = card.querySelectorAll('.mls-c-match-list__match-info p');
                 let competition = "";
@@ -521,33 +664,46 @@ async function scrapeRSL(browser) {
                     venue = infoParagraphs[infoParagraphs.length - 1].innerText.trim();
                 }
 
-                if (homeTeam && href) {
-                    results.push({ urlDate, statusText, scorebugText, homeTeam, awayTeam, competition, venue, href });
+                if (homeTeam && (href || statusText)) {
+                    results.push({ urlDate, statusText, homeTeam, awayTeam, rawTime, competition, venue });
                 }
             });
             return results;
         });
 
+        console.log(`📋 Found ${rawMatches.length} raw RSL fixtures. Normalizing...`);
         const seenEvents = new Set();
+
         for (const match of rawMatches) {
             const venueLower = match.venue.toLowerCase();
             const isAmericaFirstField = venueLower.includes('america first field') || 
                                         venueLower.includes('riot') || 
                                         venueLower.includes('rio tinto') ||
-                                        match.homeTeam.toLowerCase().includes('salt lake');
+                                        (match.homeTeam.toLowerCase().includes('salt lake') && !venueLower.includes('stadium') && !venueLower.includes('field'));
 
             if (!isAmericaFirstField) continue;
 
-            let cleanDate = match.urlDate || "TBA";
-            let cleanTime = "TBA";
-            const timeMatch = (match.statusText + " " + match.scorebugText).match(/\d{1,2}(?::\d{2})?\s*(?:AM|PM|am|pm)/i);
-            if (timeMatch) cleanTime = formatTime(timeMatch[0]);
+            let cleanDate = match.urlDate;
+            if (!cleanDate && match.statusText.includes('/')) {
+                const parts = match.statusText.split('/');
+                const month = parts[0].padStart(2, '0');
+                const day = parts[1].padStart(2, '0');
+                const year = parseInt(month) >= 8 ? '2026' : '2027';
+                cleanDate = `${year}-${month}-${day}`;
+            }
+
+            // Convert browser-rendered CT back to local venue MT (-1 hr)
+            const cleanTime = convertCentralToMountain(match.rawTime);
 
             if (cleanDate !== "TBA" && new Date(cleanDate) < today) continue;
 
             const cleanType = categorizeRSL(match.competition);
-            const eventTitle = `${match.homeTeam.toUpperCase()} VS. ${match.awayTeam.toUpperCase()}`;
-            const dedupeKey = `${cleanDate}-${eventTitle}`;
+            
+            let awayFormatted = toTitleCase(match.awayTeam);
+            if (awayFormatted.toLowerCase() === 'la galaxy') awayFormatted = 'LA Galaxy';
+
+            const eventTitle = `Salt Lake vs. ${awayFormatted}`;
+            const dedupeKey = `${cleanDate}-${cleanTime}-${eventTitle}`;
 
             if (seenEvents.has(dedupeKey)) continue;
             seenEvents.add(dedupeKey);
@@ -559,323 +715,355 @@ async function scrapeRSL(browser) {
                 time: cleanTime,
                 type: cleanType
             });
+
             console.log(`✅ Kept: ${eventTitle} on ${cleanDate} (${cleanTime}) [${cleanType}]`);
         }
-    } catch (e) { console.log(`❌ RSL failed: ${e.message}`); }
-    await page.close();
+    } catch (e) { 
+        console.log(`❌ RSL failed: ${e.message}`); 
+    } finally {
+        await page.close();
+    }
     return venueData;
 }
 
-// 5. America First Field 
+// 5. America First Field Women
 async function scrapeRSLW(browser) {
     const page = await browser.newPage();
-    let royalsData = [];
-    const today = new Date().toISOString().split('T')[0];
-
+    const royalsData = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
     try {
-        console.log(`\nNavigating to Utah Royals Schedule...`);
-        await page.goto('https://www.rsl.com/utahroyals/schedule/#competition=all&date=2026-01-01', { waitUntil: 'domcontentloaded', timeout: 30000 });
-
-        await page.waitForSelector('.mls-c-match-list__match, tr', { timeout: 15000 });
-        await page.waitForTimeout(2000);
-
-        const rawRows = await page.$$eval('.mls-c-match-list__match, tr', (rows) => {
-            return rows.map(row => {
-                const matchLink = row.querySelector('a[href*="/matches/"]');
-                const href = matchLink ? matchLink.href : "";
-
-                let urlDate = "";
-                const urlDateMatch = href.match(/(\d{2})-(\d{2})-(\d{4})/);
-                if (urlDateMatch) {
-                    urlDate = `${urlDateMatch[3]}-${urlDateMatch[1]}-${urlDateMatch[2]}`;
-                }
-
-                const home = row.querySelector('.--home .mls-c-club__shortname, td[data-label="Home Team"]')?.innerText || "Utah Royals";
-                const away = row.querySelector('.--away .mls-c-club__shortname, td[data-label="Away Team"]')?.innerText || "Opponent TBD";
-                const time = row.querySelector('.mls-c-scorebug span, td[data-label="Time"]')?.innerText || "TBA";
-                const place = row.querySelector('.mls-c-match-list__match-info p:last-child, td[data-label="Place"]')?.innerText || "";
-
-                return { urlDate, home, away, time, place };
-            });
+        console.log(`\n👑 Navigating to Utah Royals Schedule...`);
+        // Avoid networkidle to prevent 45000ms timeouts on tracking scripts
+        await page.goto('https://www.rsl.com/utahroyals/schedule/#competition=all', { 
+            waitUntil: 'domcontentloaded', 
+            timeout: 30000 
         });
 
-        royalsData = rawRows
-            .filter(item => item.place.toLowerCase().includes('america first field') || item.home.toLowerCase().includes('royals'))
-            .map(item => {
-                const fullTitle = `${item.home.trim()} vs. ${item.away.trim()}`;
-                return {
-                    venue: 'America First Field',
-                    title: fullTitle,
-                    date: item.urlDate || formatDate(item.date),
-                    time: formatTime(item.time),
-                    type: 'NWSL'
-                };
+
+        // Wait for table body or MLS tiles
+        await page.waitForSelector('tbody tr, .mls-c-match-list__match, .mls-c-match-tile', { timeout: 15000 }).catch(() => {
+            console.log("ℹ️ Schedule container slow to paint, evaluating existing DOM...");
+
+        });
+
+        await page.waitForTimeout(2000);
+        const rawRows = await page.evaluate(() => {
+            const results = [];
+            // Method A: Check standard HTML table
+            const trs = document.querySelectorAll('tbody tr');
+            trs.forEach(row => {
+                const dateCell = row.querySelector('td[data-label="Date"], td:nth-child(1)');
+                const homeCell = row.querySelector('td[data-label="Home Team"], td:nth-child(2)');
+                const awayCell = row.querySelector('td[data-label="Away Team"], td:nth-child(3)');
+                const timeCell = row.querySelector('td[data-label="Time"], td:nth-child(4)');
+                const placeCell = row.querySelector('td[data-label="Place"], td:nth-child(5)');
+
+                const rawDate = dateCell ? dateCell.innerText.trim() : "";
+                const home = homeCell ? homeCell.innerText.trim() : "";
+                const away = awayCell ? awayCell.innerText.trim() : "";
+                const time = timeCell ? timeCell.innerText.trim() : "TBA";
+                const place = placeCell ? placeCell.innerText.trim() : "";
+
+
+                if (rawDate && (home || away)) {
+                    results.push({ rawDate, home, away, time, place });
+                }
             });
 
-        console.log(`Pulling ${royalsData.length} Utah Royals home games.`);
-    } catch (e) { console.log(`Utah Royals failed: ${e.message}`); }
-    await page.close();
+
+            // Method B: Check MLS modern card tiles
+            const tiles = document.querySelectorAll('.mls-c-match-list__match, .mls-c-match-tile');
+            tiles.forEach(tile => {
+                const link = tile.querySelector('a[href*="/matches/"]');
+                const href = link ? link.href : "";
+                let urlDate = "";
+                const dateMatch = href.match(/(\d{2})-(\d{2})-(\d{4})/);
+                if (dateMatch) {
+                    urlDate = `${dateMatch[3]}-${dateMatch[1]}-${dateMatch[2]}`;
+                }
+
+
+                const statusText = tile.querySelector('.mls-c-status-stamp__status')?.innerText.trim() || "";
+                const home = tile.querySelector('.--home .mls-c-club__shortname, .--home .mls-c-club__name')?.innerText.trim() || "";
+                const away = tile.querySelector('.--away .mls-c-club__shortname, .--away .mls-c-club__name')?.innerText.trim() || "";
+                const time = tile.querySelector('.mls-c-scorebug span')?.innerText.trim() || "TBA";
+
+                const infoParagraphs = tile.querySelectorAll('.mls-c-match-list__match-info p');
+                const place = infoParagraphs.length > 0 ? infoParagraphs[infoParagraphs.length - 1].innerText.trim() : "";
+
+                if (home && (urlDate || statusText)) {
+                    results.push({
+                        rawDate: urlDate || statusText,
+                        home,
+                        away,
+                        time,
+                        place
+                    });
+                }
+            });
+
+
+            return results;
+
+        });
+
+        console.log(`📋 Found ${rawRows.length} total Utah Royals match rows on page.`);
+        const seenEvents = new Set();
+
+        for (const item of rawRows) {
+            const placeUpper = item.place.toUpperCase();
+            const homeUpper = item.home.toUpperCase();
+
+
+            // Strict Home Venue Filtering: America First Field
+            const isHome = placeUpper.includes('AMERICA FIRST FIELD') || 
+                           placeUpper.includes('RIO TINTO') || 
+                           (homeUpper.includes('ROYALS') && !placeUpper.includes('STADIUM') && !placeUpper.includes('PARK') && !placeUpper.includes('FIELD'));
+
+
+            if (!isHome) continue;
+            let cleanDate = "TBA";
+            if (/^\d{4}-\d{2}-\d{2}$/.test(item.rawDate)) {
+                cleanDate = item.rawDate;
+            } else if (item.rawDate.includes('/')) {
+                const parts = item.rawDate.match(/(\d{1,2})\/(\d{1,2})/);
+                if (parts) {
+                    const month = parts[1].padStart(2, '0');
+                    const day = parts[2].padStart(2, '0');
+                    const year = parseInt(month) >= 8 ? '2026' : '2027';
+                    cleanDate = `${year}-${month}-${day}`;
+                }
+            } else {
+                cleanDate = formatDate(item.rawDate);
+            }
+
+
+            const cleanTime = formatTime(item.time);
+            // Filter out past matches
+            if (cleanDate !== "TBA" && new Date(cleanDate) < today) continue;
+            const homeTitle = "Utah Royals";
+            let awayTitle = item.away ? cleanOpponent(item.away) : "Opponent TBD";
+            awayTitle = toTitleCase(awayTitle);
+
+            const fullTitle = `${homeTitle} vs. ${awayTitle}`;
+            const dedupeKey = `${cleanDate}-${cleanTime}-${fullTitle}`;
+
+
+            if (seenEvents.has(dedupeKey)) continue;
+            seenEvents.add(dedupeKey);
+
+
+            royalsData.push({
+                venue: 'America First Field',
+                title: fullTitle,
+                date: cleanDate,
+                time: cleanTime,
+                type: 'NWSL'
+
+            });
+
+            console.log(`✅ Kept: ${fullTitle} on ${cleanDate} (${cleanTime}) [NWSL]`);
+
+        }
+
+
+        if (royalsData.length === 0) {
+            console.log(`ℹ️ Utah Royals 2026 regular season at America First Field is complete. 2027 NWSL home dates are not yet published.`);
+        } else {
+            console.log(`🏁 Successfully collected ${royalsData.length} upcoming Utah Royals home fixtures.`);
+
+        }
+
+
+    } catch (e) {
+        console.log(`❌ Utah Royals failed: ${e.message}`);
+    } finally {
+        await page.close();
+
+    }
+
     return royalsData;
 }
 
-// 6. Auburn Gymnastics (Neville Arena)
+// Scrape Auburn (combine all Auburn sports schedules)
+async function scrapeAuburnSport(browser, url, sportType, defaultSportName) {
+    const page = await browser.newPage();
+    const venueData = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    try {
+        console.log(`\n🦅 Scraping Auburn (${defaultSportName})...`);
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 35000 });
+
+        try {
+            const cookieBtn = page.locator('button.iubenda-cs-accept-btn, #onetrust-accept-btn-handler');
+            if (await cookieBtn.isVisible({ timeout: 3000 })) await cookieBtn.click();
+        } catch (e) {}
+
+        await page.waitForSelector('.schedule-event-item, .schedule-event-date', { timeout: 15000 }).catch(() => {});
+
+        const rawEvents = await page.evaluate(() => {
+            const results = [];
+            const cards = document.querySelectorAll('.schedule-event-item');
+
+            cards.forEach(card => {
+                // 1. Home Game Verification
+                const locEl = card.querySelector('.schedule-event-item__location, .schedule-event-location');
+                const locText = locEl ? locEl.innerText.toUpperCase() : "";
+                const isHome = locText.includes('NEVILLE ARENA') || locText.includes('AUBURN, AL');
+
+                if (!isHome) return;
+
+                // 2. Opponent (Excludes Promo Titles)
+                const oppEl = card.querySelector('.schedule-event-item__opponent-name, .schedule-default-event__opponent-name');
+                let opponent = oppEl ? oppEl.innerText.trim() : "";
+
+                if (!opponent) {
+                    const teamContent = card.querySelector('.schedule-event-item__team-content');
+                    if (teamContent) {
+                        const promo = teamContent.querySelector('.schedule-event-item__promo-title');
+                        if (promo) promo.remove();
+                        opponent = teamContent.innerText.trim();
+                    }
+                }
+
+                // 3. Extract ISO Date and Time directly from <time datetime="...">
+                let isoDate = "";
+                let isoTime = "TBA";
+
+                const timeTag = card.querySelector('time[datetime]');
+                if (timeTag) {
+                    const dt = timeTag.getAttribute('datetime'); // e.g., "2027-02-15T19:00:00.000-06:00"
+                    if (dt && dt.includes('T')) {
+                        const [datePart, rest] = dt.split('T');
+                        isoDate = datePart;
+
+                        // Check if time is specified (ignore midnight default 00:00:00)
+                        const timePart = rest.substring(0, 5); // "19:00"
+                        if (timePart && timePart !== "00:00") {
+                            let [h, m] = timePart.split(':').map(Number);
+                            const ampm = h >= 12 ? 'PM' : 'AM';
+                            h = h % 12 || 12;
+                            isoTime = `${h}:${String(m).padStart(2, '0')}${ampm} CST`;
+                        }
+                    }
+                }
+
+                // Fallback to text labels if datetime attribute is missing
+                if (!isoDate) {
+                    const dayEl = card.querySelector('.schedule-event-date__day, .schedule-event-date__month-day');
+                    isoDate = dayEl ? dayEl.innerText.trim() : "";
+                }
+
+                if (isoTime === "TBA") {
+                    const resultLabel = card.querySelector('.schedule-event-item-result');
+                    if (resultLabel) {
+                        const match = resultLabel.innerText.match(/(\d{1,2}(?::\d{2})?\s*(?:AM|PM|am|pm)(?:\s+[A-Z]{2,4})?)/i);
+                        if (match) isoTime = match[0].trim();
+                    }
+                }
+
+                if (opponent && isoDate) {
+                    results.push({ isoDate, opponent, isoTime });
+                }
+            });
+
+            return results;
+        });
+
+        console.log(`📋 Found ${rawEvents.length} Auburn ${defaultSportName} home events.`);
+        const seen = new Set();
+
+        for (const ev of rawEvents) {
+            let cleanDate = ev.isoDate;
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(cleanDate)) {
+                cleanDate = parseAuburnDate(cleanDate);
+            }
+
+            if (cleanDate !== "TBA" && new Date(cleanDate) < today) continue;
+
+            let oppClean = toTitleCase(cleanAuburnOpponent(ev.opponent));
+            if (!oppClean || oppClean.toLowerCase() === 'preview meet') {
+                oppClean = 'Preview Meet';
+            }
+
+            const fullTitle = `Auburn Tigers vs. ${oppClean}`;
+            const dedupeKey = `${cleanDate}-${fullTitle}`;
+
+            if (seen.has(dedupeKey)) continue;
+            seen.add(dedupeKey);
+
+            venueData.push({
+                venue: 'Auburn - Neville Arena',
+                title: fullTitle,
+                date: cleanDate,
+                time: ev.isoTime,
+                type: sportType
+            });
+
+            console.log(`✅ Kept: ${fullTitle} on ${cleanDate} (${ev.isoTime}) [${sportType}]`);
+        }
+
+    } catch (e) {
+        console.log(`❌ Auburn ${defaultSportName} failed: ${e.message}`);
+    } finally {
+        await page.close();
+    }
+    return venueData;
+}
+
+// Auburn wrappers
 async function scrapeNAGym(browser) {
-    const page = await browser.newPage();
-    let finalResults = [];
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    try {
-        console.log(`\nNavigating to Neville Arena Gymnastics Schedule...`);
-        await page.goto('https://auburntigers.com/sports/gymnastics/schedule', { waitUntil: 'domcontentloaded', timeout: 30000 });
-
-        try {
-            const cookieBtn = page.locator('button.iubenda-cs-accept-btn, #onetrust-accept-btn-handler');
-            if (await cookieBtn.isVisible({ timeout: 4000 })) await cookieBtn.click();
-        } catch (e) {}
-
-        await page.waitForSelector('table tbody tr, .c-schedule__item', { timeout: 15000 }).catch(() => {});
-
-        const rawRows = await page.evaluate(() => {
-            const results = [];
-            const tableRows = document.querySelectorAll('table tbody tr');
-
-            tableRows.forEach(tr => {
-                const cells = tr.querySelectorAll('td, th');
-                if (cells.length >= 3) {
-                    results.push({
-                        dateText: cells[0]?.innerText.trim() || "",
-                        teamText: cells[1]?.innerText.trim() || "",
-                        locationText: cells[2]?.innerText.trim() || "",
-                        timeText: cells[3]?.innerText.trim() || ""
-                    });
-                }
-            });
-            return results;
-        });
-
-        for (const item of rawRows) {
-            const locUpper = item.locationText.toUpperCase();
-            if (!locUpper.includes('NEVILLE ARENA') && !(locUpper.includes('AUBURN, AL') && !locUpper.includes('CENTER'))) {
-                continue;
-            }
-
-            const opponent = cleanOpponent(item.teamText);
-            const cleanDate = formatDate(`${item.dateText} 2026`);
-            let cleanTime = "TBA";
-            const timeMatch = item.timeText.match(/(\d{1,2}(?::\d{2})?\s*(?:AM|PM))/i);
-            if (timeMatch) cleanTime = formatTime(timeMatch[1]);
-
-            if (cleanDate !== "TBA" && new Date(cleanDate) < today) continue;
-
-            finalResults.push({
-                venue: 'Auburn - Neville Arena',
-                title: `AUBURN VS. ${opponent.toUpperCase()}`,
-                date: cleanDate,
-                time: cleanTime,
-                type: 'Gymnastics'
-            });
-        }
-        console.log(`Pulling ${finalResults.length} Gymnastics meets at Neville Arena.`);
-    } catch (e) { console.log(`Neville Arena - Gymnastics failed: ${e.message}`); }
-    await page.close();
-    return finalResults;
+    return scrapeAuburnSport(browser, 'https://auburntigers.com/sports/gymnastics/schedule', 'Gymnastics', 'Gymnastics');
 }
 
-// 7. Auburn Men's Basketball (Neville Arena)
 async function scrapeNAMB(browser) {
-    const page = await browser.newPage();
-    let finalResults = [];
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    try {
-        console.log(`\nNavigating to Neville Arena MBB Schedule...`);
-        await page.goto('https://auburntigers.com/sports/mens-basketball/schedule', { waitUntil: 'domcontentloaded', timeout: 30000 });
-
-        try {
-            const cookieBtn = page.locator('button.iubenda-cs-accept-btn, #onetrust-accept-btn-handler');
-            if (await cookieBtn.isVisible({ timeout: 4000 })) await cookieBtn.click();
-        } catch (e) {}
-
-        await page.waitForSelector('table tbody tr, .c-schedule__item, .schedule-event-item', { timeout: 15000 }).catch(() => {});
-
-        const rawRows = await page.evaluate(() => {
-            const results = [];
-            const tableRows = document.querySelectorAll('table tbody tr');
-
-            tableRows.forEach(tr => {
-                const cells = tr.querySelectorAll('td, th');
-                if (cells.length >= 3) {
-                    results.push({
-                        dateText: cells[0]?.innerText.trim() || "",
-                        teamText: cells[1]?.innerText.trim() || "",
-                        locationText: cells[2]?.innerText.trim() || "",
-                        timeText: cells[3]?.innerText.trim() || ""
-                    });
-                }
-            });
-            return results;
-        });
-
-        for (const item of rawRows) {
-            const locUpper = item.locationText.toUpperCase();
-            if (!locUpper.includes('NEVILLE ARENA') && !(locUpper.includes('AUBURN, AL') && !locUpper.includes('CENTER'))) {
-                continue;
-            }
-
-            const opponent = cleanOpponent(item.teamText);
-            const monthStr = item.dateText.toLowerCase().substring(0, 3);
-            const year = getYearForMonth(monthStr);
-            const cleanDate = formatDate(`${item.dateText} ${year}`);
-            let cleanTime = "TBA";
-            const timeMatch = item.timeText.match(/(\d{1,2}(?::\d{2})?\s*(?:AM|PM))/i);
-            if (timeMatch) cleanTime = formatTime(timeMatch[1]);
-
-            if (cleanDate !== "TBA" && new Date(cleanDate) < today) continue;
-
-            finalResults.push({
-                venue: 'Auburn - Neville Arena',
-                title: `AUBURN VS. ${opponent.toUpperCase()}`,
-                date: cleanDate,
-                time: cleanTime,
-                type: 'NCAA MB'
-            });
-        }
-        console.log(`Pulling ${finalResults.length} MBB games at Neville Arena.`);
-    } catch (e) { console.log(`Neville Arena - Men's Basketball failed: ${e.message}`); }
-    await page.close();
-    return finalResults;
+    return scrapeAuburnSport(browser, 'https://auburntigers.com/sports/mens-basketball/schedule', 'NCAA MB', "Men's Basketball");
 }
 
-// 8. Auburn Women's Basketball (Neville Arena)
 async function scrapeNAWB(browser) {
-    const page = await browser.newPage();
-    let finalResults = [];
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    try {
-        console.log(`\nNavigating to Neville Arena WBB Schedule...`);
-        await page.goto('https://auburntigers.com/sports/womens-basketball/schedule', { waitUntil: 'domcontentloaded', timeout: 30000 });
-
-        try {
-            const cookieBtn = page.locator('button.iubenda-cs-accept-btn, #onetrust-accept-btn-handler');
-            if (await cookieBtn.isVisible({ timeout: 4000 })) await cookieBtn.click();
-        } catch (e) {}
-
-        await page.waitForSelector('table tbody tr, .c-schedule__item, .schedule-event-item', { timeout: 15000 }).catch(() => {});
-
-        const rawRows = await page.evaluate(() => {
-            const results = [];
-            const tableRows = document.querySelectorAll('table tbody tr');
-
-            tableRows.forEach(tr => {
-                const cells = tr.querySelectorAll('td, th');
-                if (cells.length >= 3) {
-                    results.push({
-                        dateText: cells[0]?.innerText.trim() || "",
-                        teamText: cells[1]?.innerText.trim() || "",
-                        locationText: cells[2]?.innerText.trim() || "",
-                        timeText: cells[3]?.innerText.trim() || ""
-                    });
-                }
-            });
-            return results;
-        });
-
-        for (const item of rawRows) {
-            const locUpper = item.locationText.toUpperCase();
-            if (!locUpper.includes('NEVILLE ARENA') && !(locUpper.includes('AUBURN, AL') && !locUpper.includes('CENTER'))) {
-                continue;
-            }
-
-            const opponent = cleanOpponent(item.teamText);
-            const monthStr = item.dateText.toLowerCase().substring(0, 3);
-            const year = getYearForMonth(monthStr);
-            const cleanDate = formatDate(`${item.dateText} ${year}`);
-            let cleanTime = "TBA";
-            const timeMatch = item.timeText.match(/(\d{1,2}(?::\d{2})?\s*(?:AM|PM))/i);
-            if (timeMatch) cleanTime = formatTime(timeMatch[1]);
-
-            if (cleanDate !== "TBA" && new Date(cleanDate) < today) continue;
-
-            finalResults.push({
-                venue: 'Auburn - Neville Arena',
-                title: `AUBURN VS. ${opponent.toUpperCase()}`,
-                date: cleanDate,
-                time: cleanTime,
-                type: 'NCAA WB'
-            });
-        }
-        console.log(`Pulling ${finalResults.length} WBB games at Neville Arena.`);
-    } catch (e) { console.log(`Neville Arena - Women's Basketball failed: ${e.message}`); }
-    await page.close();
-    return finalResults;
+    return scrapeAuburnSport(browser, 'https://auburntigers.com/sports/womens-basketball/schedule', 'NCAA WB', "Women's Basketball");
 }
 
-// 9. Auburn Women's Volleyball (Neville Arena)
 async function scrapeNAWVB(browser) {
-    const page = await browser.newPage();
-    let finalResults = [];
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    return scrapeAuburnSport(browser, 'https://auburntigers.com/sports/womens-volleyball/schedule', 'NCAA WVB', "Women's Volleyball");
+}
 
-    try {
-        console.log(`\nNavigating to Neville Arena Volleyball Schedule...`);
-        await page.goto('https://auburntigers.com/sports/womens-volleyball/schedule', { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-        try {
-            const cookieBtn = page.locator('button.iubenda-cs-accept-btn, #onetrust-accept-btn-handler');
-            if (await cookieBtn.isVisible({ timeout: 4000 })) await cookieBtn.click();
-        } catch (e) {}
+// Format time to standard XX:XXPM/AM (e.g., 6:00PM, 8:30PM, 12:30PM) without spaces
+function formatTimeBaylor(timeStr) {
+    if (!timeStr || timeStr.toUpperCase() === 'TBA') {
+        return 'TBA';
+    }
 
-        await page.waitForSelector('table tbody tr, .c-schedule__item, .schedule-event-item', { timeout: 15000 }).catch(() => {});
+    if (timeStr.toUpperCase().includes('NOON')) {
+        return '12:00PM';
+    }
 
-        const rawRows = await page.evaluate(() => {
-            const results = [];
-            const tableRows = document.querySelectorAll('table tbody tr');
+    // If there is a time range/slash (e.g., "5PM / 5:30 PM"), take the first time
+    if (timeStr.includes('/')) {
+        timeStr = timeStr.split('/')[0].trim();
+    }
 
-            tableRows.forEach(tr => {
-                const cells = tr.querySelectorAll('td, th');
-                if (cells.length >= 3) {
-                    results.push({
-                        dateText: cells[0]?.innerText.trim() || "",
-                        teamText: cells[1]?.innerText.trim() || "",
-                        locationText: cells[2]?.innerText.trim() || "",
-                        timeText: cells[3]?.innerText.trim() || ""
-                    });
-                }
-            });
-            return results;
-        });
+    // Clean periods, timezones, and extra whitespace
+    let cleaned = timeStr.toUpperCase()
+        .replace(/\./g, '')
+        .replace(/ET|CT|PT|MT|EDT|CDT/g, '')
+        .trim();
 
-        for (const item of rawRows) {
-            const locUpper = item.locationText.toUpperCase();
-            if (!locUpper.includes('NEVILLE ARENA') && !(locUpper.includes('AUBURN, AL') && !locUpper.includes('CENTER'))) {
-                continue;
-            }
+    const match = cleaned.match(/(\d{1,2})(?::(\d{2}))?\s*(AM|PM)/i);
 
-            const opponent = cleanOpponent(item.teamText);
-            const cleanDate = formatDate(`${item.dateText} 2026`);
-            let cleanTime = "TBA";
-            const timeMatch = item.timeText.match(/(\d{1,2}(?::\d{2})?\s*(?:AM|PM))/i);
-            if (timeMatch) cleanTime = formatTime(timeMatch[1]);
+    if (match) {
+        let hour = match[1];
+        let minute = match[2] || '00';
+        let ampm = match[3].toUpperCase();
 
-            if (cleanDate !== "TBA" && new Date(cleanDate) < today) continue;
+        return `${hour}:${minute}${ampm}`;
+    }
 
-            finalResults.push({
-                venue: 'Auburn - Neville Arena',
-                title: `AUBURN VS. ${opponent.toUpperCase()}`,
-                date: cleanDate,
-                time: cleanTime,
-                type: 'NCAA WVB'
-            });
-        }
-        console.log(`Pulling ${finalResults.length} Volleyball matches at Neville Arena.`);
-    } catch (e) { console.log(`Neville Arena - Women's Volleyball failed: ${e.message}`); }
-    await page.close();
-    return finalResults;
+    return cleaned.replace(/\s+/g, '');
 }
 
 // 10. Baylor Bears (Foster Pavilion)
@@ -936,7 +1124,7 @@ async function scrapeBaylor(browser) {
                                     venue: 'Foster Pavilion',
                                     title: `Baylor vs. ${opponent}`,
                                     date: formatDate(rawDate),
-                                    time: formatTime(rawTime),
+                                    time: formatTimeBaylor(rawTime),
                                     type: type
                                 });
                             }

@@ -1,16 +1,31 @@
-const { chromium } = require('playwright-extra');
-const stealth = require('puppeteer-extra-plugin-stealth')();
-chromium.use(stealth);
+const { chromium } = require('playwright');
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
+
+// ========================== HELPER FUNCTIONS ==========================
+
+function toTitleCase(str) {
+    if (!str) return '';
+    return str
+        .toLowerCase()
+        .split(' ')
+        .map(word => {
+            // Keep specific acronyms and abbreviations uppercase
+            const upperAcronyms = ['vs.', 'vs', 'echl', 'ncaa', 'mbb', 'wbb', 'wvb', 'sec', 'umd', 'lsu', 'pmac', 'mls'];
+            if (upperAcronyms.includes(word.toLowerCase())) {
+                if (word.toLowerCase() === 'vs.' || word.toLowerCase() === 'vs') return 'vs.';
+                return word.toUpperCase();
+            }
+            return word.charAt(0).toUpperCase() + word.slice(1);
+        })
+        .join(' ');
+}
 
 // Convert date to yyyy-mm-dd format
 function formatDate(dateStr) {
-    // Handle "TBA" or date ranges
     if (!dateStr || dateStr === 'TBA' || dateStr.includes('-')) {
         return dateStr;
     }
 
-    // Remove trailing comma and extra spaces
     dateStr = dateStr.replace(/,\s*$/, '').trim();
 
     const monthMap = {
@@ -19,10 +34,8 @@ function formatDate(dateStr) {
         'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12'
     };
 
-    // Remove slashes and extra punctuation
     dateStr = dateStr.replace(/\//g, '').trim();
 
-    // Match pattern: Month Day Year or Month Day
     const match = dateStr.match(/([A-Za-z]+)\.?\s+(\d+)(?:\s+(\d{4}))?/);
     if (match) {
         const month = monthMap[match[1].toLowerCase().substring(0, 3)];
@@ -30,263 +43,65 @@ function formatDate(dateStr) {
         const year = match[3] || '2026';
 
         if (month) {
-        return `${year}-${month}-${day}`;
+            return `${year}-${month}-${day}`;
         }
     }
 
     return dateStr;
-    }
-
-// Get academic year based on current date
-// Academic year runs from August to July (e.g., 2025-2026 academic year)
-function getAcademicYear() {
-    const now = new Date();
-    const currentMonth = now.getMonth() + 1; // 1-12
-    const currentYear = now.getFullYear();
-
-  // If current month is Aug-Dec, academic year is currentYear to currentYear+1
-  // If current month is Jan-Jul, academic year is currentYear-1 to currentYear
-    if (currentMonth >= 8) {
-        return { firstHalf: currentYear, secondHalf: currentYear + 1 };
-    } else {
-        return { firstHalf: currentYear - 1, secondHalf: currentYear };
-    }
-}
-
-// Determine which year a month falls into based on academic calendar
-function getYearForMonth(monthStr) {
-    const academicYear = getAcademicYear();
-    // Oct, Nov, Dec are in the first half of academic year
-    // Jan-Sep are in the second half
-    if (monthStr === 'oct' || monthStr === 'nov' || monthStr === 'dec') {
-        return academicYear.firstHalf;
-    } else {
-        return academicYear.secondHalf;
-    }
 }
 
 // Format time to 12:00AM or 12:00PM (no space)
 function formatTime(timeStr) {
     if (!timeStr || timeStr === 'TBA') {
-        return timeStr;
+        return 'TBA';
     }
 
-    // Remove spaces between time and AM/PM
-    timeStr = timeStr.replace(/\s*(AM|PM|am|pm)/i, (match, ampm) => ampm.toUpperCase());
+    let cleaned = timeStr.toUpperCase().replace(/\./g, '').replace(/ET|CT|PT|MT|EDT|CDT/g, '').trim();
+    const match = cleaned.match(/(\d{1,2}(?::\d{2})?)\s*(AM|PM)/i);
 
-    // Ensure minutes are included (add :00 if missing)
-    if (/^\d+(?:AM|PM)$/i.test(timeStr)) {
-        timeStr = timeStr.replace(/(\d+)(AM|PM)/i, '$1:00$2');
-    }
-
-    return timeStr;
-}
-
-// Expand date ranges into individual dates
-function expandDateRange(dateStr, isGoHeels = false) {
-    const monthMap = {
-        'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4,
-        'may': 5, 'jun': 6, 'jul': 7, 'aug': 8,
-        'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
-    };
-
-    // change date format
-    const pattern1 = dateStr.match(/([A-Z]+)\.?\s+(\d+)\s*-\s*(\d+),?\s*(\d{4})/i);
-    if (pattern1) {
-        const monthStr = pattern1[1].toLowerCase().substring(0, 3);
-        const monthNum = monthMap[monthStr];
-        const startDay = parseInt(pattern1[2]);
-        const endDay = parseInt(pattern1[3]);
-        const year = pattern1[4];
-
-        const dates = [];
-        for (let day = startDay; day <= endDay; day++) {
-        dates.push(`${year}-${String(monthNum).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
-        }
-        return dates;
-    }
-
-    // format go heels
-    const pattern2 = dateStr.match(/([A-Z]+)\.?\s+(\d+)\s*-\s*([A-Z]+)\.?\s+(\d+)/i);
-    if (pattern2) {
-        const startMonthStr = pattern2[1].toLowerCase().substring(0, 3);
-        const startDay = parseInt(pattern2[2]);
-        const endMonthStr = pattern2[3].toLowerCase().substring(0, 3);
-        const endDay = parseInt(pattern2[4]);
-
-        const startMonth = monthMap[startMonthStr];
-        const endMonth = monthMap[endMonthStr];
-
-        // Determine year based on month (for Go Heels academic year logic)
-        let startYear = isGoHeels ? getYearForMonth(startMonthStr) : new Date().getFullYear();
-        let endYear = isGoHeels ? getYearForMonth(endMonthStr) : new Date().getFullYear();
-
-        const dates = [];
-
-        if (startMonth === endMonth) {
-        // Same month
-        for (let day = startDay; day <= endDay; day++) {
-            dates.push(`${startYear}-${String(startMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
-        }
-        } else {
-        // Different months - add all days from start month
-        const daysInStartMonth = new Date(startYear, startMonth, 0).getDate();
-        for (let day = startDay; day <= daysInStartMonth; day++) {
-            dates.push(`${startYear}-${String(startMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
-        }
-        // Add all days until end day in end month
-        for (let day = 1; day <= endDay; day++) {
-            dates.push(`${endYear}-${String(endMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
-        }
-        }
-        return dates;
-    }
-
-    // return single date
-    return [dateStr];
-}
-
-//  (handles 2025-2026 academic year)
-function formatGoHeelsDate(dateStr) {
-    if (!dateStr || dateStr === 'TBA') {
-        return dateStr;
-    }
-
-    // clean up the date string
-    dateStr = dateStr.replace(/\n/g, ' ').replace(/\([A-Za-z]+\)/g, '').replace(/\s+/g, ' ').trim();
-
-    // remove duplicate date
-    dateStr = dateStr.replace(/(\b[A-Za-z]{3}\s+\d+)\s+\1/g, '$1');
-
-    // remove trailing comma
-    dateStr = dateStr.replace(/,\s*$/, '').trim();
-
-    const monthMap = {
-        'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04',
-        'may': '05', 'jun': '06', 'jul': '07', 'aug': '08',
-        'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12'
-    };
-
-    // check if it's a date range (contains " - " or "TBA" after a dash)
-    if (dateStr.includes(' - ') || /\d+\s*-/.test(dateStr)) {
-        return dateStr; // Keep date ranges as-is
-    }
-
-    // match pattern
-    const match = dateStr.match(/([A-Za-z]+)\.?\s+(\d+)/);
     if (match) {
-        const monthStr = match[1].toLowerCase().substring(0, 3);
-        const month = monthMap[monthStr];
-        const day = match[2].padStart(2, '0');
+        let timePart = match[1];
+        let ampm = match[2].toUpperCase();
 
-        // determine year dynamically based on academic calendar
-        const year = getYearForMonth(monthStr);
-
-        if (month) {
-        return `${year}-${month}-${day}`;
+        if (!timePart.includes(':')) {
+            timePart += ':00';
         }
+
+        return `${timePart}${ampm}`;
     }
 
-    return dateStr;
+    return cleaned.replace(/\s+/g, '');
 }
 
-function normalizeData(rawDate, rawTitle) {
-    //clean title
-    const title = rawTitle.trim().replace(/\s+/g, ' ');
-
-    //clean date and time
-    let cleanedText = rawDate.replace(/\([A-Za-z]+\)|[A-Za-z]+, /g, '').trim();
-    cleanedText = cleanedText.replace(/\s+/g, ' ');
-
-    //split date and time
-    let datePart = cleanedText;
-    let timePart = "TBA";
-
-    if (cleanedText.toLowerCase().includes('pm') || cleanedText.toLowerCase().includes('am')) {
-        // match time pattern like "7:30 PM" or "7 PM" or "7 p.m."
-        const timeMatch = cleanedText.match(/(\d+(?::\d+)?\s*(?:pm|am|p\.m\.|a\.m\.))/i);
-        if (timeMatch) {
-        timePart = timeMatch[1].trim();
-        // convert "p.m." to "PM" and "a.m." to "AM"
-        timePart = timePart.replace(/p\.m\./i, 'PM').replace(/a\.m\./i, 'AM');
-        timePart = timePart.replace(/\s*pm/i, ' PM').replace(/\s*am/i, ' AM');
-        timePart = timePart.trim();
-
-        datePart = cleanedText.substring(0, timeMatch.index).trim();
-        // add comma after date part for consistency
-        if (datePart && !datePart.endsWith(',')) {
-            datePart = datePart + ',';
-        }
-        }
-    }
-
-    return { title, date: datePart, time: timePart };
+// ISO Helpers for Localist calendar (LSU)
+function parseIsoDate(isoStr) {
+    if (!isoStr) return 'TBA';
+    return isoStr.split('T')[0];
 }
 
-//try DOM removal of cookie popup
+function parseIsoTime(isoStr) {
+    if (!isoStr || !isoStr.includes('T')) return 'TBA';
+
+    const timePart = isoStr.split('T')[1].substring(0, 5);
+    let [hours, minutes] = timePart.split(':').map(Number);
+
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    hours = hours % 12;
+    hours = hours ? hours : 12;
+
+    return `${hours}:${String(minutes).padStart(2, '0')}${ampm}`;
+}
+
+// Popups and Transcend Manager Killer
 async function setupTranscendKiller(page) {
-    //remove on creation
     await page.addInitScript(() => {
         const kill = () => {
-        const host = document.querySelector('#transcend-consent-manager');
-        if (host) host.remove();
-
-        //unlock scroll
-        document.documentElement.style.overflow = 'auto';
-        document.body.style.overflow = 'auto';
-        document.body.style.position = 'static';
-        };
-
-        kill();
-
-        const obs = new MutationObserver(() => kill());
-        obs.observe(document.documentElement, { childList: true, subtree: true });
-    });
-
-    //block it
-    await page.route('**/*', (route) => {
-        const u = route.request().url();
-        if (
-        u.includes('transcend-cdn.com/cm/') ||
-        u.includes('transcend.io') ||
-        u.includes('/consent') && u.includes('transcend')
-        ) {
-        return route.abort();
-        }
-        return route.continue();
-    });
-}
-
-//DOM KILL FOR XFINITY CENTER SPORT
-async function setupTranscendKillerXS(page) {
-    await page.addStyleTag({
-        content: `
-            #transcend-consent-manager,
-            .satisfi_btn,
-            .satisfi_container,
-            #satisfi_chat_container,
-            .satisfi_close {
-                display: none !important;
-                visibility: hidden !important;
-                opacity: 0 !important;
-                pointer-events: none !important;
-            }
-        `
-    });
-
-    await page.addInitScript(() => {
-        const kill = () => {
-            const transcend = document.querySelector('#transcend-consent-manager');
-            if (transcend) transcend.remove();
-
-            const satisfiElements = document.querySelectorAll('.satisfi_btn, .satisfi_container, #satisfi_chat_container');
-            satisfiElements.forEach(el => el.remove());
-
+            const host = document.querySelector('#transcend-consent-manager, .satisfi_btn, .satisfi_container, #satisfi_chat_container, .satisfi_close');
+            if (host) host.remove();
             document.documentElement.style.setProperty('overflow', 'auto', 'important');
             document.body.style.setProperty('overflow', 'auto', 'important');
             document.body.style.setProperty('position', 'static', 'important');
         };
-
         kill();
         const obs = new MutationObserver(() => kill());
         obs.observe(document.documentElement, { childList: true, subtree: true });
@@ -297,7 +112,8 @@ async function setupTranscendKillerXS(page) {
         if (
             u.includes('transcend-cdn.com') ||
             u.includes('transcend.io') ||
-            u.includes('satisfi')
+            u.includes('satisfi') ||
+            (u.includes('/consent') && u.includes('transcend'))
         ) {
             return route.abort();
         }
@@ -305,256 +121,33 @@ async function setupTranscendKillerXS(page) {
     });
 }
 
+// =========================================================================
+// 1. ENMARKET ARENA
+// =========================================================================
+function categorizeEnmarket(title) {
+    const t = (title || "").toLowerCase();
 
-// Xfinity Center - Sports
-function getSportFullName(code) {
-    if (!code) return "";
-    const cleanCode = String(code).toUpperCase().trim();
-
-    // normalize a lookup key by removing dots/spaces and keeping letters, numbers and '&'
-    const key = cleanCode.replace(/\./g, '').replace(/\s+/g, '').replace(/[^A-Z0-9&]/g, '');
-
-    const sportMap = {
-        'FB': 'Football',
-        'MBB': "Men's Basketball",
-        'WBB': "Women's Basketball",
-        'WLAX': "Women's Lacrosse",
-        'T&F': 'Track & Field',
-        'TF': 'Track & Field',
-        'WVB': "Women's Volleyball",
-        'VB': 'Volleyball',
-        'SB': 'Softball',
-        'SOFTBALL': 'Softball',
-        'BASE': 'Baseball',
-        'BASEBALL': 'Baseball',
-        'MSOC': "Men's Soccer",
-        'WSOC': "Women's Soccer",
-        'CHEER': 'Cheerleading'
-    };
-
-    return sportMap[key] || sportMap[cleanCode] || cleanCode;
-}
-
-
-async function scrapeXfinityS(browser)  {
-    const context = await browser.newContext();
-    const page = await context.newPage();
-    await setupTranscendKillerXS(page);
-
-    let venueData = [];
-
-    try {
-        console.log("🚀 Navigating to Maryland Xfinity Calendar...");
-        await page.goto('https://umterps.com/calendar', { waitUntil: 'domcontentloaded', timeout: 30000 });
-        await page.waitForSelector('.fc-daygrid-body', { timeout: 15000 });
-
-        for (let m = 0; m < 12; m++) {
-            await page.waitForSelector('.fc-daygrid-day', { timeout: 10000 });
-            const monthText = await page.locator('.fc-toolbar-title').first().innerText();
-            console.log(`📅 Processing layout grid for: ${monthText}`);
-
-            // Expand hidden day events
-            await page.evaluate(() => {
-                document.querySelectorAll('.fc-daygrid-more-link').forEach(link => {
-                    if (link instanceof HTMLElement) link.click();
-                });
-            });
-            await page.waitForTimeout(1000);
-
-            const eventsInGrid = page.locator('td.fc-daygrid-day:not(.fc-day-other) .fc-daygrid-event, td.fc-daygrid-day:not(.fc-day-other) .fc-daygrid-dot-event');
-            const totalEvents = await eventsInGrid.count();
-            console.log(`🔍 Found ${totalEvents} event rows to check inside this grid view.`);
-
-            for (let i = 0; i < totalEvents; i++) {
-                if (page.isClosed()) break;
-
-                try {
-                    const currentEvent = eventsInGrid.nth(i);
-                    await currentEvent.waitFor({ state: 'visible', timeout: 3000 });
-                    await currentEvent.scrollIntoViewIfNeeded();
-
-                    // Pre-click date extraction
-                    const parentCell = currentEvent.locator('xpath=ancestor::td[contains(@class, "fc-daygrid-day")]');
-                    const cleanDate = await parentCell.getAttribute('data-date');
-
-                    await currentEvent.click({ force: true });
-                    await page.waitForTimeout(800);
-
-                    const dialogContainer = page.locator('[role="dialog"], .fc-popover, .fc-popover-body').last();
-                    
-                    // Location verification
-                    const locationDetailsLoc = dialogContainer.locator('[data-test-id="s-game-card-facility-and-location__standard-location-details"], .s-text-paragraph-small span, [class*="location"]').last();
-                    const facilityTitleLoc = dialogContainer.locator('[data-test-id="s-game-card-facility-and-location__standard-facility-title"]');
-
-                    let locationText = (await locationDetailsLoc.count() > 0) ? await locationDetailsLoc.innerText() : "";
-                    let facilityText = (await facilityTitleLoc.count() > 0) ? await facilityTitleLoc.first().innerText() : "";
-                    const unifiedLocation = `${facilityText} ${locationText}`.toUpperCase();
-
-                    const isLocalArena = unifiedLocation.includes("XFINITY CENTER") || 
-                        (unifiedLocation.includes("COLLEGE PARK, MD") && 
-                         !unifiedLocation.includes("SECU STADIUM") && 
-                         !unifiedLocation.includes("SMITH STADIUM") && 
-                         !unifiedLocation.includes("SOFTBALL STADIUM"));
-
-                    if (isLocalArena) {
-                        const sportCodeLoc = dialogContainer.locator('[data-test-id="s-game-card-standard__header-sport-name"] span, .s-game-card__header-sport-name span, .slot-event-item span:nth-child(3)').first();
-                        let rawSportCode = (await sportCodeLoc.count() > 0) ? await sportCodeLoc.innerText() : "";
-                        
-                        if (!rawSportCode) {
-                            const inlineNodeText = await currentEvent.innerText();
-                            const matchCode = inlineNodeText.match(/(MBB|WBB|WLAX|T&F|FB|WVB|BASE|SB)/i);
-                            if (matchCode) rawSportCode = matchCode[0];
-                        }
-                        const fullSportName = getSportFullName(rawSportCode);
-
-                        let opponentTitle = "";
-                        const opponentLinkLoc = dialogContainer.locator('[data-test-id="s-game-card-standard__header-team-opponent-link"], a[href*="/opponent/"]');
-                        const alternativeTitleLoc = dialogContainer.locator('.s-game-card__header__team-event-info p, h2, h3').first();
-
-                        if (await opponentLinkLoc.count() > 0) {
-                            opponentTitle = await opponentLinkLoc.first().innerText();
-                        } else if (await alternativeTitleLoc.count() > 0) {
-                            opponentTitle = await alternativeTitleLoc.innerText();
-                        } else {
-                            opponentTitle = await currentEvent.innerText();
-                        }
-
-                        let finalTitle = opponentTitle.replace(/\s+/g, ' ').trim().toUpperCase();
-                        if (finalTitle.includes("EVENTS") || finalTitle.includes("CALENDAR") || finalTitle.includes("XFINITY")) {
-                            finalTitle = "MARYLAND COMPETITION";
-                        }
-
-                        if (fullSportName && !finalTitle.includes(fullSportName.toUpperCase())) {
-                            if (!finalTitle.includes("VS") && finalTitle !== "MARYLAND COMPETITION") {
-                                finalTitle = `MARYLAND VS ${finalTitle}`;
-                            }
-                            finalTitle = `${finalTitle} (${fullSportName.toUpperCase()})`;
-                        }
-
-                        let rawTime = "TBA";
-                        const timeLoc = dialogContainer.locator('[aria-label="Event Time"]').last();
-
-                        if (await timeLoc.count() > 0) {
-                            rawTime = await timeLoc.evaluate(el => el.textContent || '');
-                            rawTime = rawTime.replace(/\s+/g, ' ').trim();
-                        }
-
-                        const timeMatch = rawTime.match(/\d{1,2}(?::\d{2})?\s*(?:AM|PM|am|pm)/i);
-                        const cleanTime = formatTime(timeMatch ? timeMatch[0].toUpperCase() : 'TBA');
-
-                        const today = new Date();
-                        today.setHours(0,0,0,0);
-                        const eventDate = new Date(cleanDate);
-
-                        if (eventDate >= today) {
-                            venueData.push({
-                                venue: 'Maryland - Xfinity Center',
-                                title: finalTitle,
-                                date: cleanDate,
-                                time: cleanTime,
-                                type: fullSportName
-                            });
-                            console.log(`✅ Kept: ${finalTitle} on ${cleanDate} (${cleanTime})`);
-                        }
-                    } else {
-                        console.log(` Skip (Offsite/Stadium Event): ${locationText || 'Unknown Location'}`);
-                    }
-
-                    // Reset open modal windows safely before next index
-                    const closeBtn = dialogContainer.locator('button:has-text("Close"), button.fc-popover-close, .close').first();
-                    if (await closeBtn.count() > 0 && await closeBtn.isVisible()) {
-                        await closeBtn.click();
-                        await page.waitForTimeout(300);
-                    } else {
-                        await page.keyboard.press('Escape').catch(() => {});
-                        await page.waitForTimeout(300);
-                    }
-                } catch (innerErr) {
-                    console.log(`⚠️ Card match skip inside step index ${i}: ${innerErr.message}`);
-                    await page.keyboard.press('Escape').catch(() => {});
-                    await page.waitForTimeout(300);
-                }
-            }
-
-            // Advance month
-            const nextBtn = page.locator('.fc-next-button').first();
-            if (await nextBtn.count() > 0 && await nextBtn.isVisible()) {
-                await nextBtn.click();
-                await page.waitForTimeout(1200);
-            } else {
-                break;
-            }
-        }
-    } catch (err) {
-        console.error("Maryland Xfinity Sports Failed:", err.message);
-    } finally {
-        await page.close();
-        await context.close();
+    // 1. ECHL Hockey
+    if (t.includes('ghost pirates') || t.includes('gladiators') || t.includes('echl') || t.includes('hockey') || t.includes('icemen')) {
+        return 'ECHL';
     }
 
-    return venueData;
-}
-
-
-
-// ENMARKET MAIN FUNCTION
-function formatDateEnmarket(dateStr) {
-    if (!dateStr || dateStr === 'TBA') return dateStr;
-
-
-    const cleanDate = dateStr.split(',').slice(1).join(',').trim().split('\n')[0].trim();
-
-    const monthMap = {
-        'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04',
-        'may': '05', 'jun': '06', 'jul': '07', 'aug': '08',
-        'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12'
-    };
-
-    const match = cleanDate.match(/([A-Za-z]+)\s+(\d+)/i);
-    if (match) {
-        const month = monthMap[match[1].toLowerCase().substring(0, 3)];
-        const day = match[2].padStart(2, '0');
-        return `2026-${month}-${day}`;
-    }
-    return dateStr;
-}
-
-function formatTimeEnmarket(timeStr) {
-    if (!timeStr || timeStr === 'TBA') return timeStr;
-
-    let clean = timeStr.replace(/CT/i, '').replace(/\./g, '').replace(/\s+/g, '').toUpperCase();
-
-    if (/^\d+(AM|PM)$/.test(clean)) {
-        clean = clean.replace(/(\d+)/, '$1:00');
-    }
-    return clean;
-}
-
-function categorizeEnmarket(title, description) {
-    const titleLower = title.toLowerCase();
-
-
-    // NCAA MB / NCAA WB
-    if (titleLower.includes('savannah steel') || titleLower.includes('jacksonville waves') || titleLower.includes('basketball')) {
-        return 'NCAA WB'; // Grouped under women's basketball tracking
-    }
-
-    // Concert
+    // 2. Concerts & Musical Performances (handles Lil Wayne, tours, rap, comedy)
     const musicKeywords = [
-        'tour', 'album', 'concert', 'live', 'band', 'presents', 'show', 
-        'music', 'festival', 'night', 'experience', 'comedy', 'comedian', 'phish'
+        'wayne', 'carter', 'tour', 'album', 'concert', 'live', 'band', 'presents', 'show', 
+        'music', 'festival', 'night', 'experience', 'comedy', 'comedian', 'phish', 'vibes', 'rap'
     ];
-    if (musicKeywords.some(kw => titleLower.includes(kw))) {
+    if (musicKeywords.some(kw => t.includes(kw)) && !t.includes('shootout') && !t.includes('tournament')) {
         return 'Concert';
     }
 
-    return 'Other';
-}
+    // 3. Women's Pro / College Basketball (if explicitly stated)
+    if (t.includes('savannah steel') || t.includes('jacksonville waves')) {
+        return 'NCAA WB';
+    }
 
-function extractTMID(url) {
-    if (!url) return 'N/A';
-    const match = url.match(/\/event\/([A-Z0-9]{16})/i);
-    return match ? match[1] : 'N/A';
+    // 4. Everything else (Volleyball, Hoops Shootout, Cirque, Monster Trucks) -> Other
+    return 'Other';
 }
 
 async function scrapeEnmarket(browser) {
@@ -569,92 +162,72 @@ async function scrapeEnmarket(browser) {
     const seenEvents = new Set();
 
     try {
-        console.log('🚀 Navigating to Enmarket Arena Schedule...');
-        await page.goto('https://www.ticketmaster.com/enmarket-arena-tickets-savannah/venue/115882', { waitUntil: 'domcontentloaded' });
+        console.log('\n🚀 Scraping Enmarket Arena Schedule...');
+        await page.goto('https://www.ticketmaster.com/enmarket-arena-tickets-savannah/venue/115882', { 
+            waitUntil: 'domcontentloaded', 
+            timeout: 30000 
+        });
 
-        // Bypass privacy consent popup if present
         try { await page.getByRole('button', { name: 'Accept All' }).click({ timeout: 3000 }); } catch (e) {}
 
-        console.log("⏳ Waiting for event listings...");
-        await page.waitForSelector('li[data-id]', { timeout: 15000 });
+        console.log("⏳ Waiting for Enmarket event listings...");
+        await page.waitForSelector('li[data-id], div[class*="sc-451c8dd0-2"]', { timeout: 15000 });
 
-        // Handle "Load More" pagination natively on Ticketmaster
         try {
             const loadMoreBtn = page.locator('button[data-testid="event-list-load-more"]');
-            while (await loadMoreBtn.isVisible()) {
+            while (await loadMoreBtn.isVisible({ timeout: 2000 })) {
                 await loadMoreBtn.scrollIntoViewIfNeeded();
                 await loadMoreBtn.click();
-                console.log('🖱️ Expanded "Load More" events list...');
                 await page.waitForTimeout(1500);
             }
-        } catch (e) {
-            console.log('Pagination settled or no additional events remaining.');
-        }
+        } catch (e) {}
 
-        const eventItems = await page.locator('li[data-id]').all();
-        console.log(`📋 Found ${eventItems.length} events on the grid. Parsing fields...`);
+        const eventItems = await page.locator('li[data-id], div[class*="sc-451c8dd0-2"]').all();
+        console.log(`📋 Found ${eventItems.length} Enmarket items on the grid.`);
 
         for (const item of eventItems) {
             try {
-                // 1. EXTRACT TITLE
                 let rawTitle = "";
 
-                // Attempt A: Direct text container next to the info button
                 const directTitleLoc = item.locator('[class*="eMziwB"], [class*="hzNfZR"] span').first();
                 if (await directTitleLoc.count() > 0) {
                     rawTitle = (await directTitleLoc.innerText()).trim();
                 }
 
-                // Attempt B: VisuallyHidden text on the link or info button
                 if (!rawTitle || rawTitle.toLowerCase() === 'find tickets') {
                     const hiddenTextLoc = item.locator('a[data-testid="event-list-link"] .VisuallyHidden-sc-8buqks-0, button[aria-controls="eventOverflow"] .VisuallyHidden-sc-8buqks-0').last();
                     if (await hiddenTextLoc.count() > 0) {
                         const rawHidden = await hiddenTextLoc.innerText();
-                        // Format is typically: "The Red Clay Strays, 10/15/26, 6:30 PM"
                         rawTitle = rawHidden.split(',')[0].replace(/Open additional information for/i, '').trim();
                     }
                 }
 
-                // Attempt C: Legacy class fallbacks
-                if (!rawTitle || rawTitle.toLowerCase() === 'find tickets') {
-                    const legacyTitle = item.locator('span[class*="ufMKn"], [class*="EventName"]').first();
-                    if (await legacyTitle.count() > 0) {
-                        rawTitle = (await legacyTitle.innerText()).trim();
-                    }
-                }
-
-                // If still empty or literal "Find Tickets", skip
                 if (!rawTitle || rawTitle.toLowerCase() === 'find tickets') continue;
 
-                // 2. EXTRACT DATE
                 let constructedDateStr = "";
                 const hiddenDateLoc = item.locator('span.VisuallyHidden-sc-8buqks-0 span').first();
                 if (await hiddenDateLoc.count() > 0) {
-                    constructedDateStr = await hiddenDateLoc.innerText(); // E.g., "August 21, 2026"
+                    constructedDateStr = await hiddenDateLoc.innerText();
                 }
 
-                // 3. EXTRACT TIME
                 let rawTime = "TBA";
                 const timeLoc = item.locator('span[class*="bZWmdt"] span, span[class*="fCBXcp"] .VisuallyHidden-sc-8buqks-0 span').first();
                 if (await timeLoc.count() > 0) {
-                    rawTime = await timeLoc.innerText(); // E.g., "7:00 PM"
+                    rawTime = await timeLoc.innerText();
                 }
 
                 const cleanDate = formatDate(constructedDateStr);
                 const timeMatch = rawTime.match(/\d{1,2}(?::\d{2})?\s*(?:AM|PM|am|pm)/i);
                 const cleanTime = formatTime(timeMatch ? timeMatch[0] : 'TBA');
+                
                 const eventType = categorizeEnmarket(rawTitle);
+                const finalTitle = toTitleCase(rawTitle.replace(/\s+/g, ' ').trim());
 
-                const finalTitle = rawTitle.replace(/\s+/g, ' ').trim().toUpperCase();
                 const dedupeKey = `${cleanDate}-${cleanTime}-${finalTitle}`;
-
                 if (seenEvents.has(dedupeKey)) continue;
                 seenEvents.add(dedupeKey);
 
-                if (cleanDate !== 'TBA' && new Date(cleanDate) < today) {
-                    console.log(`⏩ Skipping past event: ${rawTitle.trim().toUpperCase()} on ${cleanDate}`);
-                    continue;
-                }
+                if (cleanDate !== 'TBA' && new Date(cleanDate) < today) continue;
 
                 venueData.push({
                     venue: 'Enmarket Arena',
@@ -664,10 +237,10 @@ async function scrapeEnmarket(browser) {
                     type: eventType
                 });
 
-                console.log(`✅ Extracted: ${finalTitle} on ${cleanDate} (${cleanTime}) [${eventType}]`);
+                console.log(`✅ Kept: ${finalTitle} on ${cleanDate} (${cleanTime}) [${eventType}]`);
 
             } catch (innerErr) {
-                console.log(`⚠️ Skipping an event due to parsing error: ${innerErr.message}`);
+                continue;
             }
         }
 
@@ -681,10 +254,291 @@ async function scrapeEnmarket(browser) {
     return venueData;
 }
 
-// =======================================================================================
-// ALLIANZ FIELD MAIN FUNCTION
-// =======================================================================================
-//convert iso timestamp 
+// =========================================================================
+// 2. MARYLAND - XFINITY CENTER (ATHLETICS CALENDAR)
+// =========================================================================
+function mapMarylandSportType(sportCode, fullText) {
+    const code = (sportCode || "").toUpperCase().trim();
+    const text = (fullText || "").toLowerCase();
+
+    if (code === 'MBB' || text.includes("men's basketball")) {
+        return 'NCAA MB';
+    }
+    if (code === 'WBB' || text.includes("women's basketball")) {
+        return 'NCAA WB';
+    }
+    if (code === 'VB' || code === 'WVB' || text.includes('volleyball')) {
+        return 'NCAA WVB';
+    }
+    if (text.includes('concert') || text.includes('live in')) {
+        return 'Concert';
+    }
+    
+    // MSOC, WLAX, T&F, Wrestling, Gymnastics -> Other
+    return 'Other';
+}
+
+// Scrape Maryland - Xfinity Center events from the athletics calendar
+ // Scrape Maryland - Xfinity Center events from the athletics calendar
+
+async function scrapeXfinityS(browser) {
+
+    const context = await browser.newContext({
+
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+
+        viewport: { width: 1366, height: 768 }
+
+    });
+
+    const page = await context.newPage();
+
+    await setupTranscendKiller(page);
+
+
+    let venueData = [];
+
+    const today = new Date();
+
+    today.setHours(0, 0, 0, 0);
+
+
+    try {
+
+        console.log(`\n🚀 Navigating to Maryland Xfinity Calendar...`);
+
+        await page.goto('https://umterps.com/calendar', { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+        await page.waitForSelector('.fc-daygrid-body', { timeout: 15000 });
+
+
+        for (let m = 0; m < 12; m++) {
+
+            await page.waitForSelector('.fc-daygrid-day', { timeout: 10000 });
+
+            const monthText = await page.locator('.fc-toolbar-title').first().innerText();
+
+            console.log(`📅 Processing layout grid for: ${monthText}`);
+
+
+            await page.evaluate(() => {
+
+                document.querySelectorAll('.fc-daygrid-more-link').forEach(link => {
+
+                    if (link instanceof HTMLElement) link.click();
+
+                });
+
+            });
+
+            await page.waitForTimeout(1000);
+
+
+            const eventsInGrid = page.locator('td.fc-daygrid-day:not(.fc-day-other) .fc-daygrid-event, td.fc-daygrid-day:not(.fc-day-other) .fc-daygrid-dot-event');
+
+            const totalEvents = await eventsInGrid.count();
+
+
+            for (let i = 0; i < totalEvents; i++) {
+
+                if (page.isClosed()) break;
+
+
+                try {
+
+                    const currentEvent = eventsInGrid.nth(i);
+
+                    await currentEvent.waitFor({ state: 'visible', timeout: 3000 });
+
+                    await currentEvent.scrollIntoViewIfNeeded();
+
+
+                    const parentCell = currentEvent.locator('xpath=ancestor::td[contains(@class, "fc-daygrid-day")]');
+
+                    const cleanDate = await parentCell.getAttribute('data-date');
+
+
+                    await currentEvent.click({ force: true });
+
+                    await page.waitForTimeout(800);
+
+
+                    const dialogContainer = page.locator('[role="dialog"], .fc-popover, .fc-popover-body').last();
+
+                    
+
+                    // Split the popup into one block per game WITHOUT relying on card class names.
+                    // Each game has one sport header; for each header, climb up the page until we
+                    // reach the biggest wrapper that still holds only that one game. Everything
+                    // (location, opponent, time) is then read from inside that wrapper, so a
+                    // multi-game day can't mix one game's location with another game.
+                    // On a single-game day the wrapper is the whole popup, same as before.
+                    const games = await dialogContainer.evaluate((dialog) => {
+                        const HEADER_SEL = '[data-test-id="s-game-card-standard__header-sport-name"], .s-game-card__header-sport-name';
+                        // Matches the site's markup:
+                        //   <a data-test-id="s-game-card-facility-and-location__game-facility-title-link"
+                        //      href="/facilities/xfinity-center/8">XFINITY Center</a>
+                        //   <span data-test-id="s-game-card-facility-and-location__standard-location-details">College Park, MD</span>
+                        const FACILITY_SEL = '[data-test-id="s-game-card-facility-and-location__game-facility-title-link"], ' +
+                                             '[data-test-id="s-game-card-facility-and-location__standard-facility-title"], ' +
+                                             'a[href*="/facilities/"]';
+                        const DETAILS_SEL = '[data-test-id="s-game-card-facility-and-location__standard-location-details"]';
+
+                        // One anchor per game: sport headers, or the location lines if headers aren't found
+                        let anchorSel = HEADER_SEL;
+                        let anchors = Array.from(dialog.querySelectorAll(HEADER_SEL));
+                        if (anchors.length <= 1) {
+                            anchorSel = DETAILS_SEL;
+                            anchors = Array.from(dialog.querySelectorAll(DETAILS_SEL));
+                        }
+                        let blocks;
+                        if (anchors.length <= 1) {
+                            blocks = [dialog];
+                        } else {
+                            blocks = anchors.map(a => {
+                                let block = a;
+                                while (block.parentElement && block.parentElement !== dialog &&
+                                       block.parentElement.querySelectorAll(anchorSel).length === 1) {
+                                    block = block.parentElement;
+                                }
+                                return block;
+                            });
+                        }
+
+                        return blocks.map(block => {
+                            const text = sel => {
+                                const el = block.querySelector(sel);
+                                return el ? (el.innerText || el.textContent || '').trim() : '';
+                            };
+                            const facilityEl = block.querySelector(FACILITY_SEL);
+                            const facility = facilityEl ? (facilityEl.textContent || '').trim() : '';
+                            const facilityHref = facilityEl ? (facilityEl.getAttribute('href') || '') : '';
+                            const city = text(DETAILS_SEL);
+                            const timeEl = block.querySelector('[aria-label="Event Time"]');
+                            return {
+                                facility,
+                                facilityHref,
+                                city,
+                                sport: text('[data-test-id="s-game-card-standard__header-sport-name"] span, .s-game-card__header-sport-name span, .slot-event-item span:nth-child(3)'),
+                                opponent: text('[data-test-id="s-game-card-standard__header-team-opponent-link"], a[href*="/opponent/"]'),
+                                altTitle: text('.s-game-card__header__team-event-info p, h2, h3'),
+                                rawTime: timeEl ? (timeEl.textContent || '') : ''
+                            };
+                        });
+                    });
+
+                    for (const game of games) {
+                        // LOCATION CHECK: the city must be exactly "College Park, MD", and the venue must be
+                        // XFINITY Center or left blank (home games like MBB vs. #9 Virginia show an empty
+                        // venue and only "College Park, MD"). A named venue that isn't Xfinity (SECU Stadium,
+                        // Ludwig Field, Bob "Turtle" Smith Stadium...) is rejected, and so is
+                        // "College Park, MD / GrillMarX" (watch parties).
+                        const facilityName = (game.facility || '').trim();
+                        const isXfinityFacility =
+                            /xfinity center/i.test(facilityName) || /\/facilities\/xfinity-center\b/i.test(game.facilityHref);
+                        const noFacilityListed = !facilityName && !game.facilityHref;
+                        const isCollegePark = /^college park,?\s*(md|maryland)\.?$/i.test((game.city || '').trim());
+
+                        if (!(isCollegePark && (isXfinityFacility || noFacilityListed))) {
+                            console.log(`   ⏭️ Skipped (not Xfinity): ${cleanDate} @ ${game.facility || 'no facility'}, ${game.city || 'no city'}`);
+                            continue;
+                        }
+
+                        let rawSportCode = game.sport;
+                        if (!rawSportCode) {
+                            const inlineNodeText = await currentEvent.innerText();
+                            const matchCode = inlineNodeText.match(/(MBB|WBB|WLAX|T&F|FB|WVB|VB|BASE|SB|MSOC|WSOC)/i);
+                            if (matchCode) rawSportCode = matchCode[0];
+                        }
+
+                        let opponentTitle = game.opponent || game.altTitle || await currentEvent.innerText();
+
+                        let cleanOpp = opponentTitle.replace(/\s+/g, ' ').replace(/^(vs\.|at)/i, '').trim();
+                        if (cleanOpp.includes("Events") || cleanOpp.includes("Calendar") || cleanOpp.includes("Xfinity")) {
+                            cleanOpp = "Competition";
+                        }
+
+                        const eventType = mapMarylandSportType(rawSportCode, `${rawSportCode} ${cleanOpp}`);
+                        const finalTitle = toTitleCase(`Maryland vs. ${cleanOpp}`);
+
+                        const timeMatch = game.rawTime.match(/\d{1,2}(?::\d{2})?\s*(?:AM|PM|am|pm)/i);
+                        const cleanTime = formatTime(timeMatch ? timeMatch[0].toUpperCase() : 'TBA');
+                        const eventDate = new Date(cleanDate);
+
+                        if (eventDate >= today) {
+                            venueData.push({
+                                venue: 'Maryland - Xfinity Center',
+                                title: finalTitle,
+                                date: cleanDate,
+                                time: cleanTime,
+                                type: eventType
+                            });
+                            console.log(`✅ Kept: ${finalTitle} on ${cleanDate} (${cleanTime}) [${eventType}]`);
+                        }
+                    }
+
+                    const closeBtn = dialogContainer.locator('button:has-text("Close"), button.fc-popover-close, .close').first();
+
+                    if (await closeBtn.count() > 0 && await closeBtn.isVisible()) {
+
+                        await closeBtn.click();
+
+                        await page.waitForTimeout(300);
+
+                    } else {
+
+                        await page.keyboard.press('Escape').catch(() => {});
+
+                        await page.waitForTimeout(300);
+
+                    }
+
+                } catch (innerErr) {
+
+                    await page.keyboard.press('Escape').catch(() => {});
+
+                    await page.waitForTimeout(300);
+
+                }
+
+            }
+
+
+            const nextBtn = page.locator('.fc-next-button').first();
+
+            if (await nextBtn.count() > 0 && await nextBtn.isVisible()) {
+
+                await nextBtn.click();
+
+                await page.waitForTimeout(1200);
+
+            } else {
+
+                break;
+
+            }
+
+        }
+
+    } catch (err) {
+
+        console.error("Maryland Xfinity Sports Failed:", err.message);
+
+    } finally {
+
+        await page.close();
+
+        await context.close();
+
+    }
+
+
+    return venueData;
+
+} 
+// =========================================================================
+// 3. ALLIANZ FIELD
+// =========================================================================
 function parseDateTimeAllianz(rawText) {
     if (!rawText) return { date: 'TBA', time: 'TBA' };
 
@@ -694,7 +548,6 @@ function parseDateTimeAllianz(rawText) {
         'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12'
     };
 
-    // Extract date 
     const dateMatch = rawText.match(/([A-Za-z]+)\s+(\d+),\s+(\d{4})/i);
     let dateISO = 'TBA';
     if (dateMatch) {
@@ -704,7 +557,6 @@ function parseDateTimeAllianz(rawText) {
         if (month) dateISO = `${year}-${month}-${day}`;
     }
 
-    // Extract time 
     const timeMatch = rawText.match(/(\d{1,2}(?::\d{2})?\s*(?:AM|PM))/i);
     let cleanTime = 'TBA';
     if (timeMatch) {
@@ -717,26 +569,15 @@ function parseDateTimeAllianz(rawText) {
     return { date: dateISO, time: cleanTime };
 }
 
-// Categorize Allianz Field events
 function categorizeAllianz(title, categoriesText) {
     const combined = `${title} ${categoriesText}`.toLowerCase();
 
-    if (combined.includes('mnufc 2') || combined.includes('mls next pro')) {
-        return 'MLS Next Pro';
-    }
-    
-    if (combined.includes('nwsl') || combined.includes('aurora')) {
-        return 'NWSL';
-    }
-
-    if (combined.includes('mnufc') || combined.includes('mls') || combined.includes('leagues cup') || combined.includes('minnesota united')) {
-        return 'MLS';
-    }
+    if (combined.includes('mnufc 2') || combined.includes('mls next pro')) return 'MLS Next Pro';
+    if (combined.includes('nwsl') || combined.includes('aurora')) return 'NWSL';
+    if (combined.includes('mnufc') || combined.includes('mls') || combined.includes('leagues cup') || combined.includes('minnesota united')) return 'MLS';
 
     const musicKeywords = ['concert', 'tour', 'album', 'live in', 'yacht rock', 'gramm', 'band', 'presents'];
-    const isMusic = musicKeywords.some(kw => combined.includes(kw));
-    
-    if (isMusic && !combined.includes('tournament') && !combined.includes('sports federation')) {
+    if (musicKeywords.some(kw => combined.includes(kw)) && !combined.includes('tournament')) {
         return 'Concert';
     }
 
@@ -748,24 +589,15 @@ async function scrapeAllianzField(browser) {
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
         viewport: { width: 1366, height: 768 }
     });
-
     const page = await context.newPage();
     let venueData = [];
 
     try {
-        console.log("🚀 Navigating to Allianz Field Calendar...");
-        await page.goto('https://www.allianzfield.com/events', {
-            waitUntil: 'domcontentloaded',
-            timeout: 30000
-        });
-
+        console.log("\n🚀 Scraping Allianz Field Calendar...");
+        await page.goto('https://www.allianzfield.com/events', { waitUntil: 'domcontentloaded', timeout: 30000 });
         await page.waitForTimeout(2000);
+        await page.waitForSelector('.event_items.w-dyn-item', { timeout: 15000 }).catch(() => {});
 
-        await page.waitForSelector('.event_items.w-dyn-item', { timeout: 15000 }).catch(() => {
-            console.log("No dynamic event items found on page load.");
-        });
-
-        // Scroll to the bottom of the page to load all Webflow events
         await page.evaluate(async () => {
             await new Promise((resolve) => {
                 let totalHeight = 0;
@@ -783,7 +615,6 @@ async function scrapeAllianzField(browser) {
         });
         await page.waitForTimeout(1000);
 
-        // Extract raw event card data
         const rawEvents = await page.evaluate(() => {
             const results = [];
             const cards = document.querySelectorAll('.event_items.w-dyn-item');
@@ -805,8 +636,7 @@ async function scrapeAllianzField(browser) {
             return results;
         });
 
-        console.log(`📋 Found ${rawEvents.length} total Allianz Field event cards. Filtering and parsing...`);
-
+        console.log(`📋 Found ${rawEvents.length} Allianz Field event cards.`);
         const today = new Date();
         today.setHours(0,0,0,0);
 
@@ -814,21 +644,19 @@ async function scrapeAllianzField(browser) {
             const { date: cleanDate, time: cleanTime } = parseDateTimeAllianz(ev.dateTimeStr);
             const eventType = categorizeAllianz(ev.title, ev.categories);
 
-            // Filter out past events
-            if (cleanDate !== 'TBA' && new Date(cleanDate) < today) {
-                console.log(`⏩ Skipping past event: ${ev.title} on ${cleanDate}`);
-                continue;
-            }
+            if (cleanDate !== 'TBA' && new Date(cleanDate) < today) continue;
+
+            const finalTitle = toTitleCase(ev.title.trim());
 
             venueData.push({
                 venue: 'Allianz Field',
-                title: ev.title.trim().toUpperCase(),
+                title: finalTitle,
                 date: cleanDate,
                 time: cleanTime,
                 type: eventType
             });
 
-            console.log(`✅ Kept: ${ev.title.toUpperCase()} on ${cleanDate} (${cleanTime}) [${eventType}]`);
+            console.log(`✅ Kept: ${finalTitle} on ${cleanDate} (${cleanTime}) [${eventType}]`);
         }
     } catch (err) {
         console.log("❌ Allianz Field scraping error:", err.message);
@@ -840,43 +668,17 @@ async function scrapeAllianzField(browser) {
     return venueData;
 }
 
-// LSU PMAC main function
-// ISO Helpers for Localist calendar (LSU)
-function parseIsoDate(isoStr) {
-    if (!isoStr) return 'TBA';
-    return isoStr.split('T')[0];
-}
-
-function parseIsoTime(isoStr) {
-    if (!isoStr || !isoStr.includes('T')) return 'TBA';
-
-    const timePart = isoStr.split('T')[1].substring(0, 5);
-    let [hours, minutes] = timePart.split(':').map(Number);
-
-    const ampm = hours >= 12 ? 'PM' : 'AM';
-    hours = hours % 12;
-    hours = hours ? hours : 12;
-
-    return `${hours}:${String(minutes).padStart(2, '0')}${ampm}`;
-}
-
-// Categorize LSU Events
+// =========================================================================
+// 4. LSU - PMAC
+// =========================================================================
 function categorizeLSUEvent(title) {
-    const titleLower = (title || "").toLowerCase();
-
-    if (titleLower.includes('gymnastics')) {
-        return 'Gymnastics';
+    const t = (title || "").toLowerCase();
+    if (t.includes('gymnastics')) return 'Gymnastics';
+    if (t.includes('basketball') || t.includes('mbb') || t.includes('wbb')) {
+        return (t.includes('women') || t.includes('wbb')) ? 'NCAA WB' : 'NCAA MB';
     }
-    if (titleLower.includes('basketball') || titleLower.includes('mbb') || titleLower.includes('wbb')) {
-        return (titleLower.includes('women') || titleLower.includes('wbb')) ? 'NCAA WB' : 'NCAA MB';
-    }
-    if (titleLower.includes('volleyball') || titleLower.includes('wvb')) {
-        return 'NCAA WVB';
-    }
-    if (titleLower.includes('concert') || titleLower.includes('tour') || titleLower.includes('live')) {
-        return 'Concert';
-    }
-
+    if (t.includes('volleyball') || t.includes('wvb')) return 'NCAA WVB';
+    if (t.includes('concert') || t.includes('tour') || t.includes('live')) return 'Concert';
     return 'Other';
 }
 
@@ -900,15 +702,11 @@ async function scrapeLSU(browser) {
             timeout: 30000 
         });
 
-        await page.waitForSelector('.em-card', { timeout: 15000 }).catch(() => {
-            console.log("No initial event cards found on direct view.");
-        });
+        await page.waitForSelector('.em-card', { timeout: 15000 }).catch(() => {});
 
-        // Expand pagination if available
         try {
             const loadMoreBtn = page.locator('a.em-load_more, button.em-load_more, [data-action="load_more"]').first();
             while (await loadMoreBtn.isVisible({ timeout: 2000 })) {
-                console.log("🖱️ Expanding LSU calendar listings...");
                 await loadMoreBtn.click();
                 await page.waitForTimeout(1500);
             }
@@ -930,33 +728,26 @@ async function scrapeLSU(browser) {
                     startIso = eventTextEl ? eventTextEl.innerText.trim() : "";
                 }
 
-                const locationEl = card.querySelector('.em-card_event-text a, .em-card_location');
-                const locationText = locationEl ? locationEl.innerText.trim() : "";
-
-                if (title) {
-                    results.push({ title, startIso, locationText });
-                }
+                if (title) results.push({ title, startIso });
             });
 
             return results;
         });
 
-        console.log(`📋 Found ${rawEvents.length} LSU PMAC events. Normalizing...`);
+        console.log(`📋 Found ${rawEvents.length} LSU PMAC events.`);
 
         for (const ev of rawEvents) {
             const cleanDate = parseIsoDate(ev.startIso);
             const cleanTime = parseIsoTime(ev.startIso);
             const eventType = categorizeLSUEvent(ev.title);
 
-            const finalTitle = ev.title.trim().toUpperCase();
+            const finalTitle = toTitleCase(ev.title.trim());
             const dedupeKey = `${cleanDate}-${cleanTime}-${finalTitle}`;
 
             if (seenEvents.has(dedupeKey)) continue;
             seenEvents.add(dedupeKey);
 
-            if (cleanDate !== 'TBA' && new Date(cleanDate) < today) {
-                continue;
-            }
+            if (cleanDate !== 'TBA' && new Date(cleanDate) < today) continue;
 
             venueData.push({
                 venue: 'LSU - PMAC',
@@ -978,26 +769,43 @@ async function scrapeLSU(browser) {
 
     return venueData;
 }
-// =======================================================================================
 
+// =========================================================================
+// MAIN EXECUTION
+// =========================================================================
 (async () => {
-    const browser = await chromium.launch ({ headless: false });
+    const browser = await chromium.launch({ headless: false });
 
-    //run them one by one to keep memory clean
-    const results = await Promise.all([
-        scrapeEnmarket(browser),
-        scrapeXfinityS(browser),
-        scrapeAllianzField(browser), 
-        scrapeLSU(browser)
-    ]);
+    console.log("🏁 Starting Crawler 4 Suite Execution...");
 
-    // flatten the array
+    // Run a single scraper while debugging, e.g.:  ONLY=xfinity node crawler-4.js
+    const scrapers = {
+        enmarket: scrapeEnmarket,
+        xfinity: scrapeXfinityS,
+        allianz: scrapeAllianzField,
+        lsu: scrapeLSU
+    };
+    const only = (process.env.ONLY || '').toLowerCase();
+    const toRun = only ? [scrapers[only]].filter(Boolean) : Object.values(scrapers);
+
+    const results = await Promise.all(toRun.map(fn => fn(browser)));
+
     const allData = results.flat();
 
-    //log the count
-    console.log(`\nTotal events scraped: ${allData.length}`);
+    // Global Deduplication across all 4 venues
+    const uniqueData = [];
+    const seenEntries = new Set();
 
-    // write to CSV
+    for (const item of allData) {
+        const dedupeKey = `${item.venue}|${item.title}|${item.date}|${item.type}`;
+        if (!seenEntries.has(dedupeKey)) {
+            seenEntries.add(dedupeKey);
+            uniqueData.push(item);
+        }
+    }
+
+    console.log(`\n🏁 Total unique events scraped: ${uniqueData.length}`);
+
     const csvWriter = createCsvWriter({
         path: 'calendar-4.csv',
         header: [
@@ -1009,12 +817,11 @@ async function scrapeLSU(browser) {
         ]
     });
 
-    // write the data
-    if (allData.length > 0) {
-        await csvWriter.writeRecords(allData);
-        console.log('Done! All events saved to calendar-4.csv');
+    if (uniqueData.length > 0) {
+        await csvWriter.writeRecords(uniqueData);
+        console.log('💾 Done! All events cleanly formatted & saved to calendar-4.csv');
     } else {
-        console.log('No data to write to CSV.');
+        console.log('⚠️ No records to write.');
     }
 
     await browser.close();

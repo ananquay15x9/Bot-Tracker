@@ -530,7 +530,7 @@ async function scrapeGoHeels(browser) {
     const venueData = [];
     try {
         await page.goto('https://goheels.com/sports/mens-basketball/schedule', { waitUntil: 'domcontentloaded', timeout: 30000 });
-        console.log(`\nScraping Go Heels...`);
+        console.log(`\nScraping Go Heels (Dean Smith Center)...`);
 
         await page.evaluate(() => {
             const host = document.querySelector('#transcend-consent-manager');
@@ -558,11 +558,19 @@ async function scrapeGoHeels(browser) {
             });
         } catch (e) {}
 
-        const gameCards = await page.locator('.s-game-card__header-inner-top-inner').all();
-        console.log(`Found ${gameCards.length} Go Heels games!`);
+        const gameCards = await page.locator('.s-game-card__header-inner-top-inner, .s-game-card').all();
+        console.log(`Found ${gameCards.length} Go Heels games! Checking venue location...`);
 
         for (const card of gameCards) {
             try {
+                const cardText = await card.innerText();
+                const cardTextLower = cardText.toLowerCase();
+
+                // Requirement 3: need to only scrape from 'Smith Center, Chapel Hill' only
+                if (!cardTextLower.includes('smith center') && !cardTextLower.includes('chapel hill')) {
+                    continue;
+                }
+
                 const opponent = await card.locator('[data-test-id="s-game-card-standard__header-team-opponent-link"]').innerText();
 
                 let dateText = '';
@@ -575,7 +583,9 @@ async function scrapeGoHeels(browser) {
                     dateText = await pastDate.innerText();
                 }
 
-                const timeText = await card.locator('[data-test-id="s-game-card-standard__header-game-time"]').innerText();
+                const timeLoc = card.locator('[data-test-id="s-game-card-standard__header-game-time"]');
+                const timeText = (await timeLoc.count() > 0) ? await timeLoc.innerText() : "TBA";
+
                 const cleanTitle = `UNC vs ${opponent.trim()}`;
                 const rawDateAndTime = `${dateText.trim()} ${timeText.trim()}`;
                 
@@ -604,6 +614,7 @@ async function scrapeGoHeels(browser) {
                         type: eventType
                     });
                 }
+                console.log(`✅ Kept Smith Center game: ${cleanTitle} on ${dates[0]}`);
             } catch (e) { console.log(`Error scraping game card: ${e.message.substring(0, 45)}`); }
         }
     } catch (e) { console.log(`Go Heels failed: ${e.message}`); }
@@ -615,13 +626,16 @@ async function scrapeGoHeels(browser) {
 async function scrapeGrandCasino(browser) {
     const page = await browser.newPage();
     const venueData = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
     try {
-        await page.goto('https://www.grandcasinoarena.com/events', { waitUntil: 'domcontentloaded', timeout: 30000 });
         console.log(`\nScraping Grand Casino Arena...`);
+        await page.goto('https://www.grandcasinoarena.com/events', { waitUntil: 'domcontentloaded', timeout: 30000 });
 
         try {
             const loadMoreBtn = page.locator('#loadMoreEvents');
-            while (await loadMoreBtn.isVisible() && await loadMoreBtn.isEnabled()) {
+            while (await loadMoreBtn.isVisible({ timeout: 2000 }) && await loadMoreBtn.isEnabled()) {
                 await loadMoreBtn.scrollIntoViewIfNeeded();
                 await loadMoreBtn.click();
                 await page.waitForTimeout(1500);
@@ -629,55 +643,85 @@ async function scrapeGrandCasino(browser) {
             }
         } catch (e) {}
 
-        const infoLinks = await page.locator('a.more').all();
-        const uniqueUrls = [...new Set(await Promise.all(infoLinks.map(link => link.getAttribute('href'))))];
+        const eventLinks = await page.locator('h3.title a, .info h3 a').all();
+        const urlsToVisit = [];
+        for (const link of eventLinks) {
+            const href = await link.getAttribute('href');
+            if (href) {
+                urlsToVisit.push(href.startsWith('http') ? href : `https://www.grandcasinoarena.com${href}`);
+            }
+        }
+        const uniqueUrls = [...new Set(urlsToVisit)];
+        console.log(`Found ${uniqueUrls.length} Grand Casino Arena events. Visiting detail pages...`);
+
+        const seen = new Set();
 
         for (const detailUrl of uniqueUrls) {
             try {
-                const fullUrl = detailUrl.startsWith('http') ? detailUrl : `https://www.grandcasinoarena.com${detailUrl}`;
-                await page.goto(fullUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+                await page.goto(detailUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
 
-                const rawTitle = await page.locator('h1.title').first().innerText();
-                const cleanTitle = rawTitle.trim().replace(/\s+/g, ' ');
+                const titleLoc = page.locator('h1.title, h1').first();
+                const title = (await titleLoc.count() > 0) ? await titleLoc.innerText() : "Event";
 
-                let eventType = 'Other';
-                let eventDescription = "";
-                if (cleanTitle.toLowerCase().includes('wild') || cleanTitle.toLowerCase().includes('vs.')) {
-                    eventType = 'NHL';
-                } else if (cleanTitle.toLowerCase().includes('pwhl')) {
-                    eventType = 'PWHL';
-                } else {
-                    eventDescription = await page.locator('.event_description').innerText().catch(() => "");
-                    eventType = assignType(cleanTitle, eventDescription);
+                let month = "";
+                let day = "";
+                let year = "2026";
+                let eventTime = "TBA";
+
+                const monthEl = page.locator('.m-date__month').first();
+                const dayEl = page.locator('.m-date__day').first();
+                const yearEl = page.locator('.m-date__year').first();
+
+                if (await monthEl.count() > 0) month = await monthEl.innerText();
+                if (await dayEl.count() > 0) day = await dayEl.innerText();
+                if (await yearEl.count() > 0) {
+                    const yText = await yearEl.innerText();
+                    year = yText.replace(',', '').trim();
                 }
 
-                const showtimes = await page.locator('li.listItem.clearfix').all();
-                for (const show of showtimes) {
-                    const dateText = await show.locator('.cell.showings_date').innerText().catch(() => "");
-                    const timeText = await show.locator('.time.cell').innerText().catch(() => "");
-
-                    const parsedDate = new Date(dateText.trim());
-                    const currentYear = new Date().getFullYear();
-                    const month = String(parsedDate.getMonth() + 1).padStart(2, '0');
-                    const day = String(parsedDate.getDate()).padStart(2, '0');
-                    const formattedDate = !isNaN(parsedDate.getTime()) ? `${currentYear}-${month}-${day}` : formatDate(dateText);
-
-                    venueData.push({
-                        venue: 'Grand Casino Arena',
-                        title: cleanTitle,
-                        date: formattedDate,
-                        time: formatTime(timeText),
-                        type: eventType
-                    });
+                const startsEl = page.locator('.sidebar_event_starts span').first();
+                if (await startsEl.count() > 0) {
+                    eventTime = await startsEl.innerText();
                 }
-                console.log(`Pulling: ${cleanTitle} [${eventType}]`);
-            } catch (e) { console.log(`Error scraping Grand Casino detail: ${e.message.substring(0, 45)}`); }
+
+                const rawDateStr = `${month.trim()} ${day.trim()}, ${year}`;
+                const cleanDate = formatDate(rawDateStr);
+                const cleanTime = formatTime(eventTime);
+
+                if (cleanDate !== "TBA" && new Date(cleanDate) < today) continue;
+
+                let eventType = 'Concert';
+                const t = title.toLowerCase();
+                if (t.includes('wild') || t.includes('nhl') || t.includes('vs')) eventType = 'NHL';
+                else if (t.includes('pwhl')) eventType = 'PWHL';
+
+                const cleanTitle = title.replace(/\s+/g, ' ').trim();
+                const dedupeKey = `${cleanDate}-${cleanTitle}`;
+
+                if (seen.has(dedupeKey)) continue;
+                seen.add(dedupeKey);
+
+                venueData.push({
+                    venue: 'Grand Casino Arena',
+                    title: cleanTitle,
+                    date: cleanDate,
+                    time: cleanTime,
+                    type: eventType
+                });
+
+                console.log(`✅ Kept: ${cleanTitle} on ${cleanDate} (${cleanTime}) [${eventType}]`);
+            } catch (err) {
+                console.log(`Grand Casino subpage failed: ${err.message.substring(0, 45)}`);
+            }
         }
-    } catch (e) { console.log(`Grand Casino Arena failed: ${e.message}`); }
-    await page.close();
+
+    } catch (e) {
+        console.log(`Grand Casino Arena failed: ${e.message}`);
+    } finally {
+        await page.close();
+    }
     return venueData;
 }
-
 
 // KFC Yum Center Main Function
 async function scrapeKFC(browser) {
@@ -853,75 +897,73 @@ async function scrapeAmerant(browser) {
 async function scrapeCanadaLifeCentre(browser) {
     const page = await browser.newPage();
     const venueData = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
     try {
-        await page.goto('https://www.canadalifecentre.ca/events/', { waitUntil: 'domcontentloaded', timeout: 30000 });
         console.log(`\nScraping Canada Life Centre...`);
+        await page.goto('https://www.canadalifecentre.ca/events/', { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await page.waitForTimeout(2000);
 
-        const eventItems = await page.locator('div.rhc-widget-upcoming-item').all();
-        const eventList = [];
+        const rawEvents = await page.evaluate(() => {
+            const results = [];
+            // Target the widget title container directly from your HTML snippet
+            const titleBlocks = document.querySelectorAll('.rhc-widget-upcoming-title, div:has(> a.rhc-title-link)');
 
-        for (const item of eventItems) {
-            try {
-                const titleLink = item.locator('a.rhc-title-link');
-                const title = (await titleLink.innerText()).trim();
-                const url = await titleLink.getAttribute('href');
-                const dateText = await item.locator('.rhc-widget-date').innerText();
-                const timeText = await item.locator('.rhc-widget-time').innerText();
+            titleBlocks.forEach(block => {
+                const titleLink = block.querySelector('a.rhc-title-link, a[itemprop="url"]');
+                const title = titleLink ? titleLink.innerText.trim() : "";
 
-                if (url) {
-                    eventList.push({
-                        title,
-                        url,
-                        rawDate: dateText.trim(),
-                        rawTime: timeText.trim()
-                    });
+                const dateEl = block.querySelector('.rhc-widget-date, .rhc_date');
+                const timeEl = block.querySelector('.rhc-widget-time');
+
+                const rawDate = dateEl ? dateEl.innerText.trim() : ""; // e.g. "Nov 13, 2026"
+                const rawTime = timeEl ? timeEl.innerText.trim() : "TBA"; // e.g. "7:00pm"
+
+                if (title && rawDate) {
+                    results.push({ title, rawDate, rawTime });
                 }
-            } catch (err) { continue; }
+            });
+
+            return results;
+        });
+
+        console.log(`Found ${rawEvents.length} Canada Life Centre events.`);
+        const seen = new Set();
+
+        for (const ev of rawEvents) {
+            const cleanDate = formatDate(ev.rawDate);
+            const cleanTime = formatTime(ev.rawTime);
+
+            if (cleanDate !== "TBA" && new Date(cleanDate) < today) continue;
+
+            const cleanTitle = ev.title.replace(/\s+/g, ' ').trim();
+            const eventType = categorizeCanadaLifeCentre(cleanTitle, "");
+
+            const dedupeKey = `${cleanDate}-${cleanTime}-${cleanTitle}`;
+            if (seen.has(dedupeKey)) continue;
+            seen.add(dedupeKey);
+
+            venueData.push({
+                venue: 'Canada Life Centre',
+                title: cleanTitle,
+                date: cleanDate,
+                time: cleanTime,
+                type: eventType
+            });
+
+            console.log(`✅ Kept: ${cleanTitle} on ${cleanDate} (${cleanTime}) [${eventType}]`);
         }
 
-        console.log(`Found ${eventList.length} Canada Life events. Processing details...`);
-
-        for (const event of eventList) {
-            try {
-                await page.goto(event.url, { waitUntil: 'domcontentloaded', timeout: 20000 });
-                const mainArticle = page.locator('article.calendar-events, .rhc-event-wrapper').first();
-
-                let finalDate = "";
-                const metaDateLoc = mainArticle.locator('meta[itemprop="startDate"]');
-                if (await metaDateLoc.count() > 0) {
-                    const metaDate = await metaDateLoc.first().getAttribute('content');
-                    finalDate = metaDate.split('T')[0];
-                } else {
-                    finalDate = formatDate(event.rawDate);
-                }
-
-                let finalTime = event.rawTime;
-                const startTimeLoc = mainArticle.locator('.icon-postmeta-fc_start_time .fe-extrainfo-value');
-                if (await startTimeLoc.count() > 0) {
-                    finalTime = await startTimeLoc.innerText();
-                }
-
-                let description = "";
-                const metaDescLoc = page.locator('meta[itemprop="description"]');
-                if (await metaDescLoc.count() > 0) {
-                    description = await metaDescLoc.first().getAttribute('content');
-                }
-
-                const eventType = categorizeCanadaLifeCentre(event.title, description);
-                venueData.push({
-                    venue: 'Canada Life Centre',
-                    title: event.title,
-                    date: finalDate,
-                    time: formatTime(finalTime),
-                    type: eventType
-                });
-                console.log(`Pulling ${event.title} [${eventType}]`);
-            } catch (e) { console.log(`Error scraping detail for ${event.title}: ${e.message.substring(0, 45)}`); }
-        }
-    } catch (e) { console.log(`Canada Life failed: ${e.message}`); }
-    await page.close();
+    } catch (e) {
+        console.log(`Canada Life failed: ${e.message}`);
+    } finally {
+        await page.close();
+    }
     return venueData;
 }
+
+// Chartway Arena scraper
 
 async function scrapeChartway(browser) {
     const page = await browser.newPage();
@@ -1161,13 +1203,19 @@ async function scrapeVillanova(browser) {
 
                 for (const event of events) {
                     try {
+                        const eventText = await event.innerText();
+                        // Requirement: scrape only villanova, Pa. (exclude Philadelphia, Pa. or others)
+                        const locLower = eventText.toLowerCase();
+                        if (!locLower.includes('villanova, pa')) {
+                            continue;
+                        }
+
                         const sportCode = await event.locator('span[data-bind*="sport.short_display"]').innerText();
                         const opponent = await event.locator('span[data-bind*="opponent.title"]').innerText();
                         const eventType = categorizeVillanova(sportCode, opponent);
 
                         if (!eventType) continue;
 
-                        const eventText = await event.innerText();
                         let finalTime = "TBA";
                         const timeMatch = eventText.match(/(\d{1,2}(:\d{2})?\s*(?:p\.m\.|a\.m\.|AM|PM))/i);
                         if (timeMatch) finalTime = timeMatch[1];
@@ -1196,6 +1244,7 @@ async function scrapeVillanova(browser) {
     return venueData;
 }
 
+// ScottsMiracle-Gro Field scraper
 async function scrapeSMG(browser) {
     const page = await browser.newPage();
     const venueData = [];
@@ -1214,7 +1263,7 @@ async function scrapeSMG(browser) {
         try { await page.locator('#onetrust-accept-btn-handler').click({ timeout: 3000 }); } catch (e) {}
         try { await page.locator('.a5-widget-icon-html-close').click({ timeout: 2000 }); } catch (e) {}
 
-        console.log("📜 Loading all SMG event cards...");
+        // Scroll to load all cards
         await page.evaluate(async () => {
             await new Promise((resolve) => {
                 let totalHeight = 0;
@@ -1234,30 +1283,23 @@ async function scrapeSMG(browser) {
 
         const rawEvents = await page.evaluate(() => {
             const results = [];
-            const cardElements = document.querySelectorAll('.fusion-layout-column, .tribe-events-pro-photo__event, .fusion-post-grid, .fusion-column-wrapper');
+            const cards = document.querySelectorAll('.fusion-layout-column, .fusion-column-wrapper');
 
-            cardElements.forEach(card => {
-                const linkEl = card.querySelector('a[href*="/event/"]');
-                if (!linkEl) return;
-                const href = linkEl.href;
-                if (href.includes('host-an-event')) return;
+            cards.forEach(card => {
+                const titleLink = card.querySelector('h3.fusion-title-heading a, .fusion-title a, h2 a, h3 a');
+                if (!titleLink) return;
 
-                let title = "";
-                const titleEl = card.querySelector('h2, h3, h4, .fusion-post-title');
-                if (titleEl) {
-                    title = titleEl.innerText.trim();
-                } else {
-                    const img = card.querySelector('img');
-                    if (img && img.alt) title = img.alt.trim();
-                }
+                const title = titleLink.innerText.trim();
+                if (title.toLowerCase().includes('host an event')) return;
 
-                const textContent = card.innerText || "";
+                // Extract date from .et-date-underline or p tags
+                const dateEl = card.querySelector('.et-date-underline p, .fusion-text p');
+                const rawDateStr = dateEl ? dateEl.innerText.trim() : "";
 
-                if (title && !results.some(r => r.title === title)) {
+                if (title && rawDateStr) {
                     results.push({
                         title,
-                        textContent,
-                        href
+                        rawDateStr
                     });
                 }
             });
@@ -1265,51 +1307,56 @@ async function scrapeSMG(browser) {
             return results;
         });
 
-        console.log(`📋 Found ${rawEvents.length} distinct SMG cards. Processing...`);
+        console.log(`📋 Found ${rawEvents.length} distinct SMG cards. Expanding multi-day ranges...`);
+        const seen = new Set();
 
         for (const ev of rawEvents) {
-            if (ev.title.toLowerCase().includes('just a moment') || ev.title.toLowerCase().includes('scottsmiraclegro')) {
-                continue;
+            const cleanTitle = ev.title.replace(/\s+/g, ' ').trim();
+            const category = categorizeSMG(cleanTitle);
+
+            // Handle date ranges like "Nov 7 - Nov 13"
+            let dates = [];
+            const rangeMatch = ev.rawDateStr.match(/([A-Za-z]{3,9})\s+(\d{1,2})\s*-\s*(?:([A-Za-z]{3,9})\s+)?(\d{1,2})(?:,?\s*(\d{4}))?/i);
+
+            if (rangeMatch) {
+                const startMonth = rangeMatch[1];
+                const startDay = parseInt(rangeMatch[2]);
+                const endMonth = rangeMatch[3] || startMonth;
+                const endDay = parseInt(rangeMatch[4]);
+                const year = rangeMatch[5] || '2026';
+
+                // Pass into expandDateRange formatted as "Nov 7 - Nov 13, 2026"
+                dates = expandDateRange(`${startMonth} ${startDay} - ${endDay}, ${year}`);
+            } else {
+                dates = [formatDate(`${ev.rawDateStr} 2026`)];
             }
 
-            let cleanDate = "TBA";
-            const dateMatch = ev.textContent.match(/\b(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s*(\d{4})?/i);
-            if (dateMatch) {
-                const month = dateMatch[1];
-                const day = dateMatch[2];
-                const year = dateMatch[3] || '2026';
-                cleanDate = formatDate(`${month} ${day} ${year}`);
+            for (const singleDate of dates) {
+                if (singleDate !== "TBA" && new Date(singleDate) < today) continue;
+
+                const dedupeKey = `${singleDate}-${cleanTitle}`;
+                if (seen.has(dedupeKey)) continue;
+                seen.add(dedupeKey);
+
+                venueData.push({
+                    venue: 'ScottsMiracle-Gro Field',
+                    title: cleanTitle,
+                    date: singleDate,
+                    time: 'TBA',
+                    type: category
+                });
+
+                console.log(`✅ Kept: ${cleanTitle} on ${singleDate} [${category}]`);
             }
-
-            let cleanTime = "TBA";
-            const timeMatch = ev.textContent.match(/(\d{1,2}(?::\d{2})?\s*(?:AM|PM|am|pm))/i);
-            if (timeMatch) {
-                cleanTime = formatTime(timeMatch[1]);
-            }
-
-            if (cleanDate !== "TBA" && new Date(cleanDate) < today) {
-                continue;
-            }
-
-            const cleanTitle = ev.title.replace(/\s+/g, ' ').trim().toUpperCase();
-            const category = categorizeSMG(cleanTitle + " " + ev.textContent);
-
-            venueData.push({
-                venue: 'ScottsMiracle-Gro Field',
-                title: cleanTitle,
-                date: cleanDate,
-                time: cleanTime,
-                type: category
-            });
-
-            console.log(`✅ Kept: ${cleanTitle} on ${cleanDate} (${cleanTime}) [${category}]`);
         }
 
-    } catch (e) { console.log(`❌ ScottsMiracleGro-Field failed: ${e.message}`); }
-    await page.close();
+    } catch (e) {
+        console.log(`❌ ScottsMiracleGro-Field failed: ${e.message}`);
+    } finally {
+        await page.close();
+    }
     return venueData;
 }
-
 // =======================================================================================
 // MAIN RUNNER
 
