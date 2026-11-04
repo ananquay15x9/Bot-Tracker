@@ -210,10 +210,17 @@ async function scrapeEnmarket(browser) {
                     constructedDateStr = await hiddenDateLoc.innerText();
                 }
 
+                // Ticketmaster's class names (bZWmdt, fCBXcp...) change often, so read the time from the
+                // card's full text instead. Remove the title first so times inside a title
+                // (e.g. "Check In By 1:30pm") aren't mistaken for the start time.
                 let rawTime = "TBA";
-                const timeLoc = item.locator('span[class*="bZWmdt"] span, span[class*="fCBXcp"] .VisuallyHidden-sc-8buqks-0 span').first();
-                if (await timeLoc.count() > 0) {
-                    rawTime = await timeLoc.innerText();
+                const cardText = ((await item.textContent()) || '').replace(/\s+/g, ' ');
+                const textWithoutTitle = cardText.split(rawTitle).join(' ');
+                const cardTimeMatch =
+                    textWithoutTitle.match(/(?:•|·|\bat\b)\s*(\d{1,2}:\d{2}\s*[AP]\.?M\.?)/i) ||
+                    textWithoutTitle.match(/\b(\d{1,2}:\d{2}\s*[AP]\.?M\.?)/i);
+                if (cardTimeMatch) {
+                    rawTime = cardTimeMatch[1].replace(/\./g, '');
                 }
 
                 const cleanDate = formatDate(constructedDateStr);
@@ -670,16 +677,35 @@ async function scrapeAllianzField(browser) {
 
 // =========================================================================
 // 4. LSU - PMAC
+// Scrapes the lsusports.net schedule pages and keeps only events at
+// "Baton Rouge, La. (Maravich Center)".
 // =========================================================================
-function categorizeLSUEvent(title) {
+const LSU_SCHEDULES = [
+    { url: 'https://lsusports.net/sports/mb/schedule',     type: 'NCAA MB' },
+    { url: 'https://lsusports.net/sports/wbball/schedule', type: 'NCAA WB' },
+    { url: 'https://lsusports.net/sports/vb/schedule',     type: 'NCAA WVB' },
+    { url: 'https://lsusports.net/sports/fb/schedule',     type: 'NCAA Football' },
+    { url: 'https://lsusports.net/sports/gm/schedule',     type: 'Other' }   // Gymnastics
+];
+
+// Concerts listed on a schedule page are tagged Concert; everything else uses the sport's type
+function categorizeLSUEvent(title, sportType) {
     const t = (title || "").toLowerCase();
-    if (t.includes('gymnastics')) return 'Gymnastics';
-    if (t.includes('basketball') || t.includes('mbb') || t.includes('wbb')) {
-        return (t.includes('women') || t.includes('wbb')) ? 'NCAA WB' : 'NCAA MB';
-    }
-    if (t.includes('volleyball') || t.includes('wvb')) return 'NCAA WVB';
-    if (t.includes('concert') || t.includes('tour') || t.includes('live')) return 'Concert';
-    return 'Other';
+    if (/\b(concert|tour|live in concert)\b/.test(t)) return 'Concert';
+    return sportType || 'Other';
+}
+
+// "Nov 6" has no year: Jul-Dec belong to the season's first year, Jan-Jun to the next year
+function lsuSeasonDate(monthDay) {
+    const monthMap = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+    const m = (monthDay || '').match(/([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2})/);
+    if (!m) return 'TBA';
+    const month = monthMap[m[1].toLowerCase()];
+    if (!month) return 'TBA';
+    const now = new Date();
+    const seasonStartYear = now.getMonth() + 1 >= 7 ? now.getFullYear() : now.getFullYear() - 1;
+    const year = month >= 7 ? seasonStartYear : seasonStartYear + 1;
+    return `${year}-${String(month).padStart(2, '0')}-${String(m[2]).padStart(2, '0')}`;
 }
 
 async function scrapeLSU(browser) {
@@ -690,83 +716,103 @@ async function scrapeLSU(browser) {
     const page = await context.newPage();
     await setupTranscendKiller(page);
 
-    let venueData = [];
+    const venueData = [];
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const seenEvents = new Set();
 
-    try {
-        console.log(`\n🚀 Scraping LSU Pete Maravich Assembly Center (PMAC)...`);
-        await page.goto('https://calendar.lsu.edu/pete_maravich_assembly_center_316', { 
-            waitUntil: 'domcontentloaded', 
-            timeout: 30000 
-        });
+    console.log(`\n🚀 Scraping LSU Pete Maravich Assembly Center (PMAC) from lsusports.net...`);
 
-        await page.waitForSelector('.em-card', { timeout: 15000 }).catch(() => {});
-
+    for (const sched of LSU_SCHEDULES) {
+        let kept = 0, notPmac = 0, past = 0;
         try {
-            const loadMoreBtn = page.locator('a.em-load_more, button.em-load_more, [data-action="load_more"]').first();
-            while (await loadMoreBtn.isVisible({ timeout: 2000 })) {
-                await loadMoreBtn.click();
-                await page.waitForTimeout(1500);
+            await page.goto(sched.url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+            await page.waitForSelector('.schedule-event-item__top', { timeout: 20000 });
+
+            // Scroll so every game in the season renders
+            let lastCount = -1;
+            for (let i = 0; i < 10; i++) {
+                const count = await page.locator('.schedule-event-item__top').count();
+                if (count === lastCount) break;
+                lastCount = count;
+                await page.mouse.wheel(0, 5000);
+                await page.waitForTimeout(800);
             }
-        } catch (e) {}
 
-        const rawEvents = await page.evaluate(() => {
-            const results = [];
-            const cards = document.querySelectorAll('.em-card');
+            const rawEvents = await page.evaluate(() => {
+                const clean = s => (s || '').replace(/\s+/g, ' ').trim();
+                return Array.from(document.querySelectorAll('.schedule-event-item__top')).map(top => {
+                    const item = top.closest('[class*="schedule-event-item"]:not(.schedule-event-item__top)') || top.parentElement || top;
 
-            cards.forEach(card => {
-                const titleEl = card.querySelector('.em-card_title a, .em-card_title');
-                const title = titleEl ? titleEl.innerText.trim() : "";
+                    const monthDay = clean(top.querySelector('.schedule-event-item__date-box .schedule-event-date__month-day, .schedule-event-date__month-day')?.textContent);
 
-                const timeEl = card.querySelector('em-local-time');
-                let startIso = timeEl ? timeEl.getAttribute('start') : "";
+                    // Opponent: last span inside the name (the first child is the "vs."/"at" label)
+                    const nameEl = top.querySelector('.schedule-default-event__name');
+                    let opponent = '';
+                    if (nameEl) {
+                        const spans = nameEl.querySelectorAll(':scope > span');
+                        opponent = clean(spans.length ? spans[spans.length - 1].textContent : nameEl.textContent);
+                        opponent = opponent.replace(/^(vs\.?|at)\s+/i, '');
+                    }
+                    const divider = clean(top.querySelector('.schedule-default-event__divider')?.textContent);
 
-                if (!startIso) {
-                    const eventTextEl = card.querySelector('.em-card_event-text');
-                    startIso = eventTextEl ? eventTextEl.innerText.trim() : "";
+                    const location = clean(
+                        top.querySelector('.schedule-event-item__location')?.textContent ||
+                        top.querySelector('.schedule-event-location')?.textContent ||
+                        item.querySelector('.schedule-event-location')?.textContent
+                    );
+
+                    const result = clean(top.querySelector('.schedule-event-item-result__label, .schedule-event-item-result')?.textContent);
+
+                    return { monthDay, opponent, divider, location, result };
+                });
+            });
+
+            for (const ev of rawEvents) {
+                // Only games at the Maravich Center
+                if (!/maravich center/i.test(ev.location)) { notPmac++; continue; }
+
+                // Past games show a score ("W, 85-60") instead of a time
+                const isScore = /\b[WLT]\b|\d+\s*-\s*\d+|final/i.test(ev.result) && !/\d{1,2}(:\d{2})?\s*[AP]\.?M/i.test(ev.result);
+                if (isScore) { past++; continue; }
+
+                const cleanDate = lsuSeasonDate(ev.monthDay);
+                if (cleanDate !== 'TBA') {
+                    const [y, mo, d] = cleanDate.split('-').map(Number);
+                    if (new Date(y, mo - 1, d) < today) { past++; continue; }
                 }
 
-                if (title) results.push({ title, startIso });
-            });
+                const timeMatch = ev.result.match(/\d{1,2}(?::\d{2})?\s*[AP]\.?M\.?/i);
+                const cleanTime = timeMatch ? formatTime(timeMatch[0]) : 'TBA';
 
-            return results;
-        });
+                const opponent = ev.opponent || 'TBA';
+                const finalTitle = `LSU Tigers vs. ${opponent}`;
+                const eventType = categorizeLSUEvent(finalTitle, sched.type);
 
-        console.log(`📋 Found ${rawEvents.length} LSU PMAC events.`);
+                const dedupeKey = `${cleanDate}-${finalTitle}`;
+                if (seenEvents.has(dedupeKey)) continue;
+                seenEvents.add(dedupeKey);
 
-        for (const ev of rawEvents) {
-            const cleanDate = parseIsoDate(ev.startIso);
-            const cleanTime = parseIsoTime(ev.startIso);
-            const eventType = categorizeLSUEvent(ev.title);
+                venueData.push({
+                    venue: 'LSU - PMAC',
+                    title: finalTitle,
+                    date: cleanDate,
+                    time: cleanTime,
+                    type: eventType
+                });
+                kept++;
+                console.log(`✅ Kept: ${finalTitle} on ${cleanDate} (${cleanTime}) [${eventType}]`);
+            }
 
-            const finalTitle = toTitleCase(ev.title.trim());
-            const dedupeKey = `${cleanDate}-${cleanTime}-${finalTitle}`;
-
-            if (seenEvents.has(dedupeKey)) continue;
-            seenEvents.add(dedupeKey);
-
-            if (cleanDate !== 'TBA' && new Date(cleanDate) < today) continue;
-
-            venueData.push({
-                venue: 'LSU - PMAC',
-                title: finalTitle,
-                date: cleanDate,
-                time: cleanTime,
-                type: eventType
-            });
-
-            console.log(`✅ Kept: ${finalTitle} on ${cleanDate} (${cleanTime}) [${eventType}]`);
+            console.log(`📋 LSU ${sched.type}: ${rawEvents.length} on schedule, ${kept} kept, ${notPmac} not at PMAC, ${past} past.`);
+        } catch (err) {
+            console.error(`❌ LSU ${sched.type} (${sched.url}) failed:`, err.message);
         }
-
-    } catch (err) {
-        console.error("❌ LSU PMAC Scraper Error:", err.message);
-    } finally {
-        await page.close();
-        await context.close();
     }
 
+    console.log(`🏁 LSU PMAC total: ${venueData.length} events.`);
+    await page.close();
+    await context.close();
     return venueData;
 }
 
