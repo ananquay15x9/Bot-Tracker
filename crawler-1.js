@@ -313,14 +313,39 @@ function categorizeAmerant(title, description) {
     return 'Other';
 }
 
-function categorizeCanadaLifeCentre(title, description) {
-    const fullText = (title + " " + description).toLowerCase();
-    if (fullText.includes('jets') || fullText.includes('nhl')) return 'NHL';
-    if (fullText.includes('moose') || fullText.includes('ahl')) return 'AHL';
-    if (fullText.includes('sea bears') || fullText.includes('cebl') || fullText.includes('basketball')) return 'CEBL';
+function parseCanadaLifeTime(timeStr) {
+    if (!timeStr || timeStr.trim() === '' || timeStr.toUpperCase() === 'TBA') {
+        return 'TBA';
+    }
 
-    const musicKeywords = ['concert', 'music', 'live', 'band', 'rock', 'orchestra', 'symphony', 'singer', 'festival', 'album', 'billboard'];
-    if (musicKeywords.some(kw => fullText.includes(kw))) return 'Concert';
+    const clean = timeStr.trim().toLowerCase();
+
+    // Handles FullCalendar shorthand: "9a", "9p", "7:30p", "11:30a", "12p"
+    const match = clean.match(/(\d{1,2})(?::(\d{2}))?\s*([ap])m?/i);
+    if (match) {
+        const hour = match[1];
+        const min = match[2] || '00';
+        const ampm = match[3].toLowerCase() === 'p' ? 'PM' : 'AM';
+        return `${hour}:${min}${ampm}`;
+    }
+
+    return formatTime(timeStr);
+}
+
+function categorizeCanadaLife(title) {
+    const t = (title || "").toLowerCase();
+
+    if (t.includes('jets') || t.includes('nhl')) return 'NHL';
+    if (t.includes('moose') || t.includes('ahl')) return 'AHL';
+    if (t.includes('sea bears') || t.includes('cebl')) return 'CEBL';
+
+    const musicKeywords = [
+        'concert', 'tour', 'live', 'album', 'band', 'orchestra', 
+        'symphony', 'music', 'festival', 'rock', 'grammy', 'acoustic'
+    ];
+    if (musicKeywords.some(kw => t.includes(kw)) && !t.includes('tournament')) {
+        return 'Concert';
+    }
 
     return 'Other';
 }
@@ -961,72 +986,163 @@ async function scrapeAmerant(browser) {
 
 
 // Canada Life Centre Main Function
+// The calendar is an older FullCalendar month grid: day cells are a table, and the
+// events are drawn ON TOP of it with absolute positions, so an event isn't inside its
+// day cell in the HTML. Each event is matched to a day by where it sits on screen
+// (its left edge and middle fall inside that day's cell).
+// "9a" / "7:30p" in .fc-event-time is the start time (local Winnipeg time, no conversion).
+function extractCanadaLifeMonth() {
+    const clean = s => (s || '').replace(/\s+/g, ' ').trim();
+    const monthNames = ['january','february','march','april','may','june','july','august','september','october','november','december'];
+
+    // Month/year shown in the header, e.g. "November 2026"
+    const header = clean(document.querySelector('.fc-header-title h2, .fc-toolbar-title, .fc-header-title')?.textContent);
+    const hm = header.match(/([A-Za-z]+)\s+(\d{4})/);
+    const viewMonth = hm ? monthNames.indexOf(hm[1].toLowerCase()) : -1;   // 0-11
+    const viewYear = hm ? parseInt(hm[2], 10) : NaN;
+
+    // ---- Day cells, in grid order
+    const tds = Array.from(document.querySelectorAll('td.fc-day'));
+    const firstInMonth = tds.findIndex(td => !td.classList.contains('fc-other-month'));
+    const cells = tds.map((td, i) => {
+        let date = td.getAttribute('data-date') || '';
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date) && viewMonth >= 0) {
+            const dayNum = parseInt(clean(td.querySelector('.fc-day-number')?.textContent), 10);
+            if (dayNum) {
+                let y = viewYear, m = viewMonth;
+                if (td.classList.contains('fc-other-month')) {
+                    if (i < firstInMonth) { m -= 1; } else { m += 1; }
+                    if (m < 0) { m = 11; y -= 1; }
+                    if (m > 11) { m = 0; y += 1; }
+                }
+                date = `${y}-${String(m + 1).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
+            }
+        }
+        return { rect: td.getBoundingClientRect(), date };
+    });
+
+    // ---- Events: match each to the cell under its left edge / vertical middle
+    const events = [];
+    document.querySelectorAll('a.fc-event, div.fc-event').forEach(ev => {
+        // A multi-week event is drawn as several pieces; only the first piece marks the start day
+        if (ev.classList.contains('fc-event-hori') && !ev.classList.contains('fc-event-start')) return;
+
+        const r = ev.getBoundingClientRect();
+        if (!r.width && !r.height) return;
+        const x = r.left + 3;
+        const y = r.top + Math.min(r.height / 2, 20);
+
+        let cell = cells.find(c => x >= c.rect.left && x < c.rect.right && y >= c.rect.top && y < c.rect.bottom);
+        if (!cell) {
+            // Fallback: same column, closest row
+            const sameCol = cells.filter(c => x >= c.rect.left && x < c.rect.right);
+            sameCol.sort((a, b) => Math.abs(a.rect.top - y) - Math.abs(b.rect.top - y));
+            cell = sameCol[0];
+        }
+
+        events.push({
+            title: clean(ev.querySelector('.fc-event-title')?.textContent || ev.getAttribute('title') || ev.textContent),
+            rawTime: clean(ev.querySelector('.fc-event-time')?.textContent),
+            date: cell ? cell.date : '',
+            href: ev.getAttribute('href') || ''
+        });
+    });
+
+    return { header, cellCount: cells.length, events };
+}
+
 async function scrapeCanadaLifeCentre(browser) {
-    const page = await browser.newPage();
+    const context = await browser.newContext({
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+        viewport: { width: 1366, height: 900 }
+    });
+    const page = await context.newPage();
     const venueData = [];
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+    const seenEvents = new Set();
 
     try {
-        console.log(`\nScraping Canada Life Centre...`);
-        await page.goto('https://www.canadalifecentre.ca/events/', { waitUntil: 'domcontentloaded', timeout: 30000 });
-        await page.waitForTimeout(2000);
-
-        const rawEvents = await page.evaluate(() => {
-            const results = [];
-            // Target the widget title container directly from your HTML snippet
-            const titleBlocks = document.querySelectorAll('.rhc-widget-upcoming-title, div:has(> a.rhc-title-link)');
-
-            titleBlocks.forEach(block => {
-                const titleLink = block.querySelector('a.rhc-title-link, a[itemprop="url"]');
-                const title = titleLink ? titleLink.innerText.trim() : "";
-
-                const dateEl = block.querySelector('.rhc-widget-date, .rhc_date');
-                const timeEl = block.querySelector('.rhc-widget-time');
-
-                const rawDate = dateEl ? dateEl.innerText.trim() : ""; // e.g. "Nov 13, 2026"
-                const rawTime = timeEl ? timeEl.innerText.trim() : "TBA"; // e.g. "7:00pm"
-
-                if (title && rawDate) {
-                    results.push({ title, rawDate, rawTime });
-                }
-            });
-
-            return results;
+        console.log(`\n🍁 Navigating to Canada Life Centre Calendar...`);
+        await page.goto('https://www.canadalifecentre.ca/calendar/', {
+            waitUntil: 'domcontentloaded',
+            timeout: 45000
         });
 
-        console.log(`Found ${rawEvents.length} Canada Life Centre events.`);
-        const seen = new Set();
+        try {
+            const cookieBtn = page.locator('#onetrust-accept-btn-handler, button:has-text("Accept")').first();
+            if (await cookieBtn.isVisible({ timeout: 4000 })) await cookieBtn.click();
+        } catch (e) {}
 
-        for (const ev of rawEvents) {
-            const cleanDate = formatDate(ev.rawDate);
-            const cleanTime = formatTime(ev.rawTime);
-
-            if (cleanDate !== "TBA" && new Date(cleanDate) < today) continue;
-
-            const cleanTitle = ev.title.replace(/\s+/g, ' ').trim();
-            const eventType = categorizeCanadaLifeCentre(cleanTitle, "");
-
-            const dedupeKey = `${cleanDate}-${cleanTime}-${cleanTitle}`;
-            if (seen.has(dedupeKey)) continue;
-            seen.add(dedupeKey);
-
-            venueData.push({
-                venue: 'Canada Life Centre',
-                title: cleanTitle,
-                date: cleanDate,
-                time: cleanTime,
-                type: eventType
-            });
-
-            console.log(`✅ Kept: ${cleanTitle} on ${cleanDate} (${cleanTime}) [${eventType}]`);
+        try {
+            await page.waitForSelector('td.fc-day', { state: 'attached', timeout: 30000 });
+        } catch (e) {
+            await page.screenshot({ path: 'canadalife_debug.png', fullPage: true }).catch(() => {});
+            console.log(`   ⚠️ Calendar grid never appeared (page title: "${await page.title()}"). Saved canadalife_debug.png`);
+            throw e;
         }
 
+        for (let m = 0; m < 12; m++) {
+            // Events are loaded after the grid; give them time to draw
+            await page.waitForSelector('a.fc-event, div.fc-event', { state: 'attached', timeout: 15000 }).catch(() => {});
+            await page.waitForTimeout(1500);
+
+            const month = await page.evaluate(extractCanadaLifeMonth);
+            console.log(`📅 Canada Life Centre ${month.header || `month ${m + 1}`}: ${month.events.length} events on the grid`);
+
+            for (const item of month.events) {
+                if (!item.title) continue;
+                if (!/^\d{4}-\d{2}-\d{2}$/.test(item.date)) {
+                    console.log(`   ⚠️ No day found for "${item.title}"`);
+                    continue;
+                }
+
+                const [y, mo, d] = item.date.split('-').map(Number);
+                if (new Date(y, mo - 1, d) < today) continue;
+
+                const cleanTitle = item.title.replace(/\s+/g, ' ').trim();
+                const cleanTime = parseCanadaLifeTime(item.rawTime);   // "9a" -> "9:00AM"
+                const eventType = categorizeCanadaLife(cleanTitle);
+
+                // Days from the next/previous month show up in two views; skip repeats
+                const dedupeKey = `${item.date}-${cleanTime}-${cleanTitle.toLowerCase()}`;
+                if (seenEvents.has(dedupeKey)) continue;
+                seenEvents.add(dedupeKey);
+
+                venueData.push({
+                    venue: 'Canada Life Centre',
+                    title: cleanTitle,
+                    date: item.date,
+                    time: cleanTime,
+                    type: eventType
+                });
+                console.log(`✅ Kept: ${cleanTitle} on ${item.date} (${cleanTime}) [${eventType}]`);
+            }
+
+            // Next month: wait until the header actually changes
+            const nextBtn = page.locator('.fc-button-next, button.fc-next-button, span.fc-button-next').first();
+            if (!(await nextBtn.isVisible({ timeout: 3000 }).catch(() => false))) break;
+            const before = month.header;
+            await nextBtn.click();
+            await page.waitForFunction(
+                prev => {
+                    const el = document.querySelector('.fc-header-title h2, .fc-toolbar-title, .fc-header-title');
+                    return el && el.textContent.replace(/\s+/g, ' ').trim() !== prev;
+                },
+                before,
+                { timeout: 10000 }
+            ).catch(() => {});
+        }
+
+        console.log(`🏁 Finished Canada Life Centre: ${venueData.length} upcoming events extracted.`);
+
     } catch (e) {
-        console.log(`Canada Life failed: ${e.message}`);
+        console.log(`❌ Canada Life Centre failed: ${e.message}`);
     } finally {
         await page.close();
+        await context.close();
     }
+
     return venueData;
 }
 
