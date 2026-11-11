@@ -1,0 +1,20 @@
+[Unit]
+Description=iSite crawler worker (runs the venue event crawlers for the hub)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__DIR__
+# xvfb-run gives the crawlers a virtual screen, because they open a visible (headed) browser
+ExecStart=/usr/bin/xvfb-run -a --server-args="-screen 0 1280x1024x24" __NODE__ server.js
+__USB__
+Restart=always
+RestartSec=5
+# a crawl that eats all the memory is stopped by the system before it can take the whole Pi down
+MemoryHigh=1500M
+MemoryMax=1700M
+
+[Install]
+WantedBy=multi-user.target
