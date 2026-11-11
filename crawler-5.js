@@ -92,7 +92,9 @@ function categorizeAOTW(title) {
 function extractAOTWDetail() {
     const clean = s => (s || '').replace(/\s+/g, ' ').trim();
 
-    const title = clean(document.querySelector('h1.title')?.textContent);
+    const title = clean(document.querySelector('h1.title')?.textContent)
+        || clean(document.querySelector('h1')?.textContent)
+        || clean(document.querySelector('meta[property="og:title"]')?.getAttribute('content'));
 
     const dateLi = document.querySelector('.eventDetailList .sidebar_event_date');
     let dateText = '';
@@ -123,18 +125,26 @@ function extractAOTWDetail() {
 
 // Opens a detail page and waits for its title; retries once with a longer wait
 // (pages load slowly when several venue browsers run at the same time)
+// Opens a detail page. Waits for the event title, but never for long:
+//  - normal pages have h1.title; some (e.g. a redirected or special event page) don't,
+//    so any <h1> or the sidebar date list also counts as "loaded"
+//  - one retry for a slow page, then give up on that event and move on
+// Returns false if the page/browser has been closed, so the caller can stop.
 async function gotoDetailWithRetry(page, url) {
     for (let attempt = 1; attempt <= 2; attempt++) {
+        if (page.isClosed()) return false;
         try {
-            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: attempt === 1 ? 30000 : 60000 });
-            await page.waitForSelector('h1.title', { timeout: attempt === 1 ? 15000 : 30000 });
-            return;
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: attempt === 1 ? 25000 : 40000 });
+            await page.waitForSelector('h1.title, h1, .eventDetailList', { state: 'attached', timeout: attempt === 1 ? 10000 : 15000 });
+            return true;
         } catch (err) {
+            if (page.isClosed() || /has been closed/i.test(err.message)) return false;
             if (attempt === 2) throw err;
             console.log(`   ↻ Slow page, retrying: ${url}`);
-            await page.waitForTimeout(2000);
+            await page.waitForTimeout(1500).catch(() => {});
         }
     }
+    return true;
 }
 
 async function scrapeAngelOfTheWinds(browser) {
@@ -230,9 +240,17 @@ async function scrapeAngelOfTheWinds(browser) {
         console.log(`📋 Found ${detailUrls.length} Angel of the Winds events.`);
 
         // ---- Open each detail page
+        let checked = 0;
         for (const url of detailUrls) {
+            checked++;
+            if (checked % 10 === 0 || checked === detailUrls.length) {
+                console.log(`   ↪︎ Detail pages checked: ${checked}/${detailUrls.length}`);
+            }
             try {
-                await gotoDetailWithRetry(page, url);
+                if (!(await gotoDetailWithRetry(page, url))) {
+                    console.log('   ⚠️ Browser page was closed, stopping this venue.');
+                    break;
+                }
 
                 const d = await page.evaluate(extractAOTWDetail);
                 if (!d.title) continue;
@@ -275,7 +293,7 @@ async function scrapeAngelOfTheWinds(browser) {
             }
         }
 
-        console.log(`🏁 Angel of the Winds: ${venueData.length} rows.`);
+        console.log(`🏁 Angel of the Winds: all ${detailUrls.length} events checked, ${venueData.length} rows. Closing.`);
     } catch (err) {
         console.error('❌ Angel of the Winds failed:', err.message);
     } finally {
@@ -327,7 +345,9 @@ function extractFHCDetail() {
         return clean(clone.textContent);
     };
 
-    const title = clean(document.querySelector('h1.title')?.textContent);
+    const title = clean(document.querySelector('h1.title')?.textContent)
+        || clean(document.querySelector('h1')?.textContent)
+        || clean(document.querySelector('meta[property="og:title"]')?.getAttribute('content'));
     const dateText = sidebarText('.sidebar_event_date');
     const startsText = sidebarText('.sidebar_event_starts');
     const venueText = sidebarText('.sidebar_event_venue');
@@ -432,9 +452,17 @@ async function scrapeFirstHorizon(browser) {
 
         let otherVenue = 0;
 
+        let checked = 0;
         for (const url of detailUrls) {
+            checked++;
+            if (checked % 10 === 0 || checked === detailUrls.length) {
+                console.log(`   ↪︎ Detail pages checked: ${checked}/${detailUrls.length}`);
+            }
             try {
-                await gotoDetailWithRetry(page, url);
+                if (!(await gotoDetailWithRetry(page, url))) {
+                    console.log('   ⚠️ Browser page was closed, stopping this venue.');
+                    break;
+                }
 
                 const d = await page.evaluate(extractFHCDetail);
                 if (!d.title) continue;
@@ -569,7 +597,9 @@ function extractEBACards() {
 // Runs in the detail page: every showing (visible or under "More Showings")
 function extractEBAShowings() {
     const clean = s => (s || '').replace(/\s+/g, ' ').trim();
-    const title = clean(document.querySelector('h1.title')?.textContent);
+    const title = clean(document.querySelector('h1.title')?.textContent)
+        || clean(document.querySelector('h1')?.textContent)
+        || clean(document.querySelector('meta[property="og:title"]')?.getAttribute('content'));
     const items = document.querySelectorAll('.event_showings .listItem, ul.list li.listItem');
     const showings = Array.from(items).map(li => ({
         dateText: clean(li.querySelector('.showings_date')?.textContent),
@@ -679,7 +709,10 @@ async function scrapeEagleBank(browser) {
         // Multi-date events: open "More Info" and read every showing
         for (const c of rangeCards) {
             try {
-                await gotoDetailWithRetry(page, c.url);
+                if (!(await gotoDetailWithRetry(page, c.url))) {
+                    console.log('   ⚠️ Browser page was closed, stopping this venue.');
+                    break;
+                }
                 const d = await page.evaluate(extractEBAShowings);
                 const title = d.title || c.title;
                 const type = categorizeEBA(title);

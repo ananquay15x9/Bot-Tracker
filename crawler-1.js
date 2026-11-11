@@ -1,6 +1,53 @@
 const { chromium } = require('playwright');
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 
+//========================================
+// YEAR HELPERS (replaces the years that used to be typed into this file)
+// Many of these pages show dates with no year ("Nov 14"). The year is now worked out from today's date, so
+// nothing needs editing when the calendar turns over.
+//
+//   seasonYearFor(month, day)  for an Aug-Jul sports season or an events list. The season counts as started on
+//                              the most recent July 1: Aug-Dec belong to that year, Jan-Jun to the next, and
+//                              July to the nearest July ahead.
+//   yearForText("Sat, Nov 14") the same, reading the month and day out of a piece of text.
+//   THIS_YEAR / NEXT_YEAR_NUM  for calendar-year leagues (MLS, NWSL, PLL): this calendar year and the next.
+const MONTH_NUMBERS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+const THIS_YEAR = new Date().getFullYear();
+const NEXT_YEAR_NUM = THIS_YEAR + 1;
+
+function currentSeasonStart(now = new Date()) {
+    return (now.getMonth() + 1) >= 7 ? now.getFullYear() : now.getFullYear() - 1;
+}
+
+function seasonYearFor(month, day = 1, now = new Date()) {
+    month = Number(month);
+    if (!(month >= 1 && month <= 12)) return now.getFullYear();
+    const start = currentSeasonStart(now);
+    if (month >= 8) return start;       // Aug - Dec
+    if (month <= 6) return start + 1;   // Jan - Jun
+    // July: the nearest one ahead (this year's up to and including July itself, otherwise next year's)
+    return (now.getMonth() + 1) >= 8 ? now.getFullYear() + 1 : now.getFullYear();
+}
+
+function yearForText(text, now = new Date()) {
+    const m = String(text || '').match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*(\d{1,2})?/i);
+    if (!m) return now.getFullYear();
+    return seasonYearFor(MONTH_NUMBERS[m[1].toLowerCase()], m[2] ? parseInt(m[2], 10) : 1, now);
+}
+
+// Removes rows that are exact copies of one another (same venue, title, date, time and type).
+function dedupeRows(rows) {
+    const seen = new Set();
+    const unique = [];
+    for (const row of rows) {
+        const key = [row.venue, row.title, row.date, row.time, row.type].join('|');
+        if (seen.has(key)) continue;
+        seen.add(key);
+        unique.push(row);
+    }
+    return unique;
+}
+
 // Convert date to yyyy-mm-dd format
 function formatDate(dateStr) {
     if (!dateStr || dateStr === 'TBA' || dateStr.includes('-')) {
@@ -17,11 +64,11 @@ function formatDate(dateStr) {
 
     dateStr = dateStr.replace(/\//g, '').trim();
 
-    const match = dateStr.match(/([A-Za-z]+)\.?\s+(\d+)(?:\s+(\d{4}))?/);
+    const match = dateStr.match(/([A-Za-z]+)\.?\s+(\d+)(?:,?\s+(\d{4}))?/);
     if (match) {
         const month = monthMap[match[1].toLowerCase().substring(0, 3)];
         const day = match[2].padStart(2, '0');
-        const year = match[3] || '2026';
+        const year = match[3] || seasonYearFor(parseInt(month, 10), parseInt(day, 10));
 
         if (month) {
             return `${year}-${month}-${day}`;
@@ -37,7 +84,7 @@ function getAcademicYear() {
     const currentMonth = now.getMonth() + 1;
     const currentYear = now.getFullYear();
 
-    if (currentMonth >= 8) {
+    if (currentMonth >= 7) {
         return { firstHalf: currentYear, secondHalf: currentYear + 1 };
     } else {
         return { firstHalf: currentYear - 1, secondHalf: currentYear };
@@ -47,7 +94,7 @@ function getAcademicYear() {
 // Determine which year a month falls into based on academic calendar
 function getYearForMonth(monthStr) {
     const academicYear = getAcademicYear();
-    if (monthStr === 'oct' || monthStr === 'nov' || monthStr === 'dec') {
+    if (['aug', 'sep', 'oct', 'nov', 'dec'].includes(monthStr)) {
         return academicYear.firstHalf;
     } else {
         return academicYear.secondHalf;
@@ -114,8 +161,10 @@ function expandDateRange(dateStr, isGoHeels = false) {
         const startMonth = monthMap[startMonthStr];
         const endMonth = monthMap[endMonthStr];
 
-        let startYear = isGoHeels ? getYearForMonth(startMonthStr) : new Date().getFullYear();
-        let endYear = isGoHeels ? getYearForMonth(endMonthStr) : new Date().getFullYear();
+        // no year on the page: work it out from today (a range such as "Dec 30 - Jan 2" runs into the next year)
+        const baseYear = seasonYearFor(startMonth, startDay);
+        let startYear = isGoHeels ? getYearForMonth(startMonthStr) : baseYear;
+        let endYear = isGoHeels ? getYearForMonth(endMonthStr) : (endMonth < startMonth ? baseYear + 1 : baseYear);
 
         const dates = [];
 
@@ -553,6 +602,8 @@ async function scrapeEnterprise(browser) {
 async function scrapeGoHeels(browser) {
     const page = await browser.newPage();
     const venueData = [];
+    // The selector below matches a game's inner header AND its outer card, so every game is seen twice.
+    const seenGames = new Set();
     try {
         await page.goto('https://goheels.com/sports/mens-basketball/schedule', { waitUntil: 'domcontentloaded', timeout: 30000 });
         console.log(`\nScraping Go Heels (Dean Smith Center)...`);
@@ -631,6 +682,9 @@ async function scrapeGoHeels(browser) {
                 const dates = expandDateRange(formattedDate, true);
 
                 for (const singleDate of dates) {
+                    const gameKey = `${cleanTitle}|${singleDate}|${formatTime(finalTime)}`;
+                    if (seenGames.has(gameKey)) continue;
+                    seenGames.add(gameKey);
                     venueData.push({
                         venue: 'UNC - Dean Smith Center',
                         title: cleanTitle,
@@ -728,7 +782,7 @@ async function scrapeGrandCasino(browser) {
 
                 let month = "";
                 let day = "";
-                let year = "2026";
+                let year = ""; // filled in below: the year shown on the page, else the previous event's, else worked out from today
                 let eventTime = "TBA";
 
                 // Read the date ONLY from the sidebar "Date" item. The first .m-date__* on the
@@ -761,6 +815,7 @@ async function scrapeGrandCasino(browser) {
                                    jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
                 const gcMonth = gcMonths[month.trim().toLowerCase().slice(0, 3)];
                 const gcDay = (day.match(/\d{1,2}/) || [''])[0];
+                if (!year && gcMonth && gcDay) year = String(seasonYearFor(parseInt(gcMonth, 10), parseInt(gcDay, 10)));
                 let cleanDate = (gcMonth && gcDay) ? `${year}-${gcMonth}-${gcDay.padStart(2, '0')}` : 'TBA';
                 const cleanTime = formatTime(eventTime);
 
@@ -888,7 +943,7 @@ async function scrapeKFC(browser) {
                     const day = (await dLoc.count() > 0) ? await dLoc.innerText() : "";
                     const time = (await tLoc.count() > 0) ? await tLoc.innerText() : "TBA";
 
-                    const rawDateString = (month && day) ? `${month.trim()} ${day.trim()}, 2026` : await show.innerText();
+                    const rawDateString = (month && day) ? `${month.trim()} ${day.trim()}, ${yearForText(`${month} ${day}`)}` : await show.innerText();
                     const { title, date, time: cleanTime } = normalizeData(`${rawDateString} ${time}`, eventTitle);
                     const formattedDate = formatDate(date);
 
@@ -964,7 +1019,7 @@ async function scrapeAmerant(browser) {
                     const day = (await dLoc.count() > 0) ? await dLoc.innerText() : "";
                     const time = (await tLoc.count() > 0) ? await tLoc.innerText() : "TBA";
 
-                    const rawDateString = (month && day) ? `${month.trim()} ${day.trim()}, 2026` : await show.innerText();
+                    const rawDateString = (month && day) ? `${month.trim()} ${day.trim()}, ${yearForText(`${month} ${day}`)}` : await show.innerText();
                     const { title, date, time: cleanTime } = normalizeData(`${rawDateString} ${time}`, eventTitle);
                     const formattedDate = formatDate(date);
 
@@ -1191,14 +1246,14 @@ async function scrapeChartway(browser) {
                 if (await showingsDateLoc.count() > 0) {
                     const ariaLabel = await showingsDateLoc.getAttribute('aria-label') || "";
                     const yearMatch = ariaLabel.match(/\d{4}/);
-                    const dynamicYear = yearMatch ? yearMatch[0] : new Date().getFullYear().toString();
+                    const dynamicYear = yearMatch ? yearMatch[0] : '';
 
                     const monthLoc = showingsDateLoc.locator('.m-date__month').first();
                     const dayLoc = showingsDateLoc.locator('.m-date__day').first();
                     const month = (await monthLoc.count() > 0) ? await monthLoc.innerText() : "";
                     const day = (await dayLoc.count() > 0) ? await dayLoc.innerText() : "";
 
-                    if (month && day) cleanDate = formatDate(`${month} ${day} ${dynamicYear}`);
+                    if (month && day) cleanDate = formatDate(`${month} ${day} ${dynamicYear || yearForText(`${month} ${day}`)}`);
 
                     const hourLoc = showingsDateLoc.locator('.m-date__hour').first();
                     if (await hourLoc.count() > 0) {
@@ -1238,7 +1293,7 @@ async function scrapeFaurotField(browser) {
         console.log(`\n🚀 Scraping Faurot Field (Mizzou Football)...`);
         await setupTranscendKiller(page);
         
-        await page.goto('https://mutigers.com/sports/football/schedule/2026', {
+        await page.goto(`https://mutigers.com/sports/football/schedule/${currentSeasonStart()}`, {
             waitUntil: 'domcontentloaded',
             timeout: 30000
         });
@@ -1282,7 +1337,7 @@ async function scrapeFaurotField(browser) {
                     const timeLoc = card.locator('.schedule-event-item-result__label, .schedule-event-date__time').first();
                     let rawTime = (await timeLoc.count() > 0) ? await timeLoc.innerText() : "TBA";
 
-                    const cleanDate = formatDate(`${rawDate} 2026`);
+                    const cleanDate = formatDate(`${rawDate} ${yearForText(rawDate)}`);
                     const cleanTime = formatTime(rawTime);
 
                     const eventDate = new Date(cleanDate);
@@ -1506,12 +1561,12 @@ async function scrapeSMG(browser) {
                 const startDay = parseInt(rangeMatch[2]);
                 const endMonth = rangeMatch[3] || startMonth;
                 const endDay = parseInt(rangeMatch[4]);
-                const year = rangeMatch[5] || '2026';
+                const year = rangeMatch[5] || yearForText(`${startMonth} ${startDay}`);
 
                 // Pass into expandDateRange formatted as "Nov 7 - Nov 13, 2026"
                 dates = expandDateRange(`${startMonth} ${startDay} - ${endDay}, ${year}`);
             } else {
-                dates = [formatDate(`${ev.rawDateStr} 2026`)];
+                dates = [formatDate(`${ev.rawDateStr} ${yearForText(ev.rawDateStr)}`)];
             }
 
             for (const singleDate of dates) {
@@ -1561,7 +1616,9 @@ async function scrapeSMG(browser) {
         scrapeSMG(browser)
     ]);
 
-    const allData = results.flat();
+    const rawData = results.flat();
+    const allData = dedupeRows(rawData);
+    if (rawData.length !== allData.length) console.log(`\n🧹 Removed ${rawData.length - allData.length} duplicate rows`);
     console.log(`\n🏁 Total events scraped: ${allData.length}`);
 
     const csvWriter = createCsvWriter({

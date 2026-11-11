@@ -1,6 +1,4 @@
 VENUE,EVENT NAME,DATE,TIME,TYPE
-Angel of the Winds,Everett Silvertips vs. Medicine Hat Tigers,2026-11-06,7:05PM,Other
-Angel of the Winds,Everett Silvertips vs. Tri-City Americans,2026-11-08,4:05PM,Other
 Angel of the Winds,Skate America,2026-11-13,7:00PM,Other
 Angel of the Winds,Skate America,2026-11-14,2:00PM,Other
 Angel of the Winds,Skate America,2026-11-14,6:25PM,Other
@@ -37,18 +35,13 @@ Angel of the Winds,Everett Silvertips vs. Portland Winterhawks,2027-02-26,7:05PM
 Angel of the Winds,Everett Silvertips vs. Victoria Royals,2027-02-28,4:05PM,Other
 Angel of the Winds,Everett Silvertips vs. Wenatchee Wild,2027-03-06,6:05PM,Other
 Angel of the Winds,Everett Silvertips vs. Portland Winterhawks,2027-03-07,4:05PM,Other
+Angel of the Winds,Gabriel Iglesias,2027-03-12,8:00PM,Other
 Angel of the Winds,Everett Silvertips vs. Victoria Royals,2027-03-13,6:05PM,Other
 Angel of the Winds,Everett Silvertips vs. Tri-City Americans,2027-03-19,7:05PM,Other
 Angel of the Winds,Everett Silvertips vs. Wenatchee Wild,2027-03-26,7:05PM,Other
 Angel of the Winds,Hot Wheels Stunt Show,2027-05-29,12:00PM,Other
 Angel of the Winds,Hot Wheels Stunt Show,2027-05-29,7:00PM,Other
 Angel of the Winds,Hot Wheels Stunt Show,2027-05-30,2:00PM,Other
-Angel of the Winds,Dawson Place Luncheon,2026-11-05,12:00PM,Other
-Angel of the Winds,Live Band Capricio by NASAA,2026-11-06,9:00PM,Concert
-First Horizon Coliseum,Greensboro Gargoyles vs Maine Mariners,2026-11-05,10:30AM,ECHL
-First Horizon Coliseum,Greensboro Gargoyles vs Maine Mariners,2026-11-06,7:00PM,ECHL
-First Horizon Coliseum,Greensboro Gargoyles vs Maine Mariners,2026-11-07,7:00PM,ECHL
-First Horizon Coliseum,"TobyMac, Chris Tomlin, and Third Day",2026-11-08,7:00PM,Other
 First Horizon Coliseum,Greensboro Gargoyles vs Worcester Railers,2026-11-12,7:00PM,ECHL
 First Horizon Coliseum,Banda MS (CANCELED),2026-11-13,8:00PM,Other
 First Horizon Coliseum,Greensboro Gargoyles vs Worcester Railers,2026-11-14,7:00PM,ECHL
@@ -101,8 +94,8 @@ First Horizon Coliseum,Greensboro Gargoyles vs Trenton Ironhawks,2027-04-08,10:3
 First Horizon Coliseum,Greensboro Gargoyles vs Trenton Ironhawks,2027-04-09,10:30AM,ECHL
 First Horizon Coliseum,Greensboro Gargoyles vs Trenton Ironhawks,2027-04-10,3:00PM,ECHL
 First Horizon Coliseum,We Them One's Comedy Tour,2027-04-16,8:00PM,Concert
-EagleBank Arena,George Mason Women vs. Akron,2026-11-05,7:00PM,NCAA WB
-EagleBank Arena,George Mason vs. Coppin State,2026-11-06,7:00PM,NCAA MB
+First Horizon Coliseum,Billy Strings,2027-04-23,7:30PM,Other
+First Horizon Coliseum,Billy Strings,2027-04-24,7:30PM,Other
 EagleBank Arena,George Mason Women vs. North Carolina Central,2026-11-14,3:00PM,NCAA WB
 EagleBank Arena,George Mason vs. North Carolina Central,2026-11-18,7:00PM,NCAA MB
 EagleBank Arena,for KING + Country,2026-11-20,7:00PM,Concert
@@ -136,6 +129,7 @@ EagleBank Arena,George Mason vs. VCU,2027-02-26,TBA,NCAA MB
 EagleBank Arena,George Mason Women vs St. Joseph's,2027-02-27,3:00PM,NCAA WB
 EagleBank Arena,George Mason vs. Rhode Island,2027-03-03,7:00PM,NCAA MB
 EagleBank Arena,Harlem Globetrotters: Rivalry Tour Presented By Sprite,2027-03-07,3:00PM,Concert
+EagleBank Arena,Gabriel Iglesias,2027-04-02,8:00PM,Other
 EagleBank Arena,Morat,2027-04-03,8:00PM,Other
 EagleBank Arena,We Them One's,2027-05-07,8:00PM,Other
 EagleBank Arena,Yuri & Lucero,2027-05-08,8:00PM,Other
@@ -148,10 +142,6 @@ EagleBank Arena,Disney On Ice,2027-05-01,2:30PM,Concert
 EagleBank Arena,Disney On Ice,2027-05-01,6:30PM,Concert
 EagleBank Arena,Disney On Ice,2027-05-02,10:30AM,Concert
 EagleBank Arena,Disney On Ice,2027-05-02,2:30PM,Concert
-Texas A&M - Reed Arena,Texas A&M Aggies Womens Basketball vs. Louisiana Lafayette Ragin Cajuns Womens Basketball,2026-11-05,8:00PM,NCAA WB
-Texas A&M - Reed Arena,Texas A&M Aggies Mens Basketball vs. Northern Kentucky Norse Mens Basketball,2026-11-06,7:00PM,NCAA MB
-Texas A&M - Reed Arena,Texas A&M Aggies Womens Basketball vs. LSU New Orleans Privateers Womens Basketball,2026-11-07,11:00AM,NCAA WB
-Texas A&M - Reed Arena,Texas A&M Aggies Mens Basketball vs. Louisiana Monroe Warhawks Mens Basketball,2026-11-09,7:00PM,NCAA MB
 Texas A&M - Reed Arena,Texas A&M Aggies Mens Basketball vs. Oklahoma State Cowboys Mens Basketball,2026-11-12,7:00PM,NCAA MB
 Texas A&M - Reed Arena,Texas A&M Aggies Womens Volleyball vs. LSU Tigers Womens Volleyball,2026-11-13,6:30PM,NCAA WVB
 Texas A&M - Reed Arena,Texas A&M Aggies Womens Volleyball vs. Ole Miss Rebels Womens Volleyball,2026-11-15,12:00PM,NCAA WVB
@@ -185,8 +175,6 @@ Texas A&M - Reed Arena,Texas A&M Aggies Womens Basketball vs. Georgia Bulldogs W
 Texas A&M - Reed Arena,Texas A&M Aggies Mens Basketball vs. Alabama Crimson Tide Mens Basketball,2027-02-23,8:00PM,NCAA MB
 Texas A&M - Reed Arena,Texas A&M Aggies Womens Basketball vs. Kentucky Wildcats Womens Basketball,2027-02-25,7:00PM,NCAA WB
 Texas A&M - Reed Arena,Texas A&M Aggies Mens Basketball vs. Texas Longhorns Mens Basketball,2027-03-06,7:00PM,NCAA MB
-UNM - The Pit,New Mexico Lobos Mens Basketball vs. Northern Arizona Lumberjacks Mens Basketball,2026-11-07,4:00PM,NCAA MB
-UNM - The Pit,New Mexico Lobos Mens Basketball vs. Arkansas Little Rock Trojans Mens Basketball,2026-11-10,7:00PM,NCAA MB
 UNM - The Pit,New Mexico Lobos Mens Basketball vs. Mississippi Valley Delta Devils Mens Basketball,2026-11-25,7:00PM,NCAA MB
 UNM - The Pit,New Mexico Lobos Mens Basketball vs. Utah State Aggies Mens Basketball,2026-11-29,12:00PM,NCAA MB
 UNM - The Pit,New Mexico Lobos Mens Basketball vs. New Mexico State Aggies Mens Basketball,2026-12-05,12:15PM,NCAA MB
@@ -202,7 +190,6 @@ UNM - The Pit,New Mexico Lobos Mens Basketball vs. UNLV Rebels Mens Basketball,2
 UNM - The Pit,New Mexico Lobos Mens Basketball vs. UTEP Miners Mens Basketball,2027-02-20,8:30PM,NCAA MB
 UNM - The Pit,New Mexico Lobos Mens Basketball vs. Hawaii Rainbow Warriors Mens Basketball,2027-02-24,6:00PM,NCAA MB
 UNM - The Pit,New Mexico Lobos Mens Basketball vs. Wyoming Cowboys Mens Basketball,2027-03-02,8:00PM,NCAA MB
-Wichita - Koch Arena,Men's Basketball vs. CSUN,2026-11-04,6:30PM,NCAA MB
 Wichita - Koch Arena,Men's Basketball vs. Friends,2026-11-11,6:30PM,NCAA MB
 Wichita - Koch Arena,Volleyball vs. Temple,2026-11-13,6:00PM,Other
 Wichita - Koch Arena,Women's Basketball vs. UC Riverside,2026-11-14,2:00PM,NCAA WB
@@ -222,7 +209,7 @@ Wichita - Koch Arena,Women's Basketball vs. UAB,2027-01-02,2:00PM,NCAA WB
 Wichita - Koch Arena,Women's Basketball vs. East Carolina,2027-01-06,6:00PM,NCAA WB
 Wichita - Koch Arena,Men's Basketball vs. UAB,2027-01-08,8:00PM,NCAA MB
 Wichita - Koch Arena,Women's Basketball vs. Charlotte,2027-01-17,TBA,NCAA WB
-WSU - Beasley Coliseum,Idaho Vandals at Washington State Cougars Womens Basketball,2026-11-09,11:00AM,NCAA WB
+Wichita - Koch Arena,Men's Basketball vs. East Carolina,2027-01-17,4:00PM,NCAA MB
 WSU - Beasley Coliseum,Southern Utah Thunderbirds at Washington State Cougars Womens Basketball,2026-11-13,6:00PM,NCAA WB
 WSU - Beasley Coliseum,Northwest Eagles at Washington State Cougars Mens Basketball,2026-11-14,TBA,NCAA MB
 WSU - Beasley Coliseum,Washington Huskies at Washington State Cougars Womens Basketball,2026-11-17,7:30PM,NCAA WB

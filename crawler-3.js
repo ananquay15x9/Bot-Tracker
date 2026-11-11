@@ -1,6 +1,40 @@
 const { chromium } = require('playwright');
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 
+//========================================
+// YEAR HELPERS (replaces the years that used to be typed into this file)
+// Many of these pages show dates with no year ("Nov 14"). The year is now worked out from today's date, so
+// nothing needs editing when the calendar turns over.
+//
+//   seasonYearFor(month, day)  for an Aug-Jul sports season or an events list. The season counts as started on
+//                              the most recent July 1: Aug-Dec belong to that year, Jan-Jun to the next, and
+//                              July to the nearest July ahead.
+//   yearForText("Sat, Nov 14") the same, reading the month and day out of a piece of text.
+//   THIS_YEAR / NEXT_YEAR_NUM  for calendar-year leagues (MLS, NWSL, PLL): this calendar year and the next.
+const MONTH_NUMBERS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+const THIS_YEAR = new Date().getFullYear();
+const NEXT_YEAR_NUM = THIS_YEAR + 1;
+
+function currentSeasonStart(now = new Date()) {
+    return (now.getMonth() + 1) >= 7 ? now.getFullYear() : now.getFullYear() - 1;
+}
+
+function seasonYearFor(month, day = 1, now = new Date()) {
+    month = Number(month);
+    if (!(month >= 1 && month <= 12)) return now.getFullYear();
+    const start = currentSeasonStart(now);
+    if (month >= 8) return start;       // Aug - Dec
+    if (month <= 6) return start + 1;   // Jan - Jun
+    // July: the nearest one ahead (this year's up to and including July itself, otherwise next year's)
+    return (now.getMonth() + 1) >= 8 ? now.getFullYear() + 1 : now.getFullYear();
+}
+
+function yearForText(text, now = new Date()) {
+    const m = String(text || '').match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*(\d{1,2})?/i);
+    if (!m) return now.getFullYear();
+    return seasonYearFor(MONTH_NUMBERS[m[1].toLowerCase()], m[2] ? parseInt(m[2], 10) : 1, now);
+}
+
 // Convert date to yyyy-mm-dd format
 function formatDate(dateStr) {
     // Handle "TBA" or date ranges
@@ -21,11 +55,11 @@ function formatDate(dateStr) {
     dateStr = dateStr.replace(/\//g, '').trim();
 
     // Match pattern: Month Day Year or Month Day
-    const match = dateStr.match(/([A-Za-z]+)\.?\s+(\d+)(?:\s+(\d{4}))?/);
+    const match = dateStr.match(/([A-Za-z]+)\.?\s+(\d+)(?:,?\s+(\d{4}))?/);
     if (match) {
         const month = monthMap[match[1].toLowerCase().substring(0, 3)];
         const day = match[2].padStart(2, '0');
-        const year = match[3] || '2026';
+        const year = match[3] || seasonYearFor(parseInt(month, 10), parseInt(day, 10));
 
         if (month) {
         return `${year}-${month}-${day}`;
@@ -44,7 +78,7 @@ function getAcademicYear() {
 
   // If current month is Aug-Dec, academic year is currentYear to currentYear+1
   // If current month is Jan-Jul, academic year is currentYear-1 to currentYear
-    if (currentMonth >= 8) {
+    if (currentMonth >= 7) {
         return { firstHalf: currentYear, secondHalf: currentYear + 1 };
     } else {
         return { firstHalf: currentYear - 1, secondHalf: currentYear };
@@ -54,9 +88,8 @@ function getAcademicYear() {
 // Determine which year a month falls into based on academic calendar
 function getYearForMonth(monthStr) {
     const academicYear = getAcademicYear();
-    // Oct, Nov, Dec are in the first half of academic year
-    // Jan-Sep are in the second half
-    if (monthStr === 'oct' || monthStr === 'nov' || monthStr === 'dec') {
+    // Aug-Dec are in the first half of the season year (it starts July 1); Jan-Jul are in the second half
+    if (['aug', 'sep', 'oct', 'nov', 'dec'].includes(monthStr)) {
         return academicYear.firstHalf;
     } else {
         return academicYear.secondHalf;
@@ -139,8 +172,10 @@ function expandDateRange(dateStr, isGoHeels = false) {
         const endMonth = monthMap[endMonthStr];
 
         // Determine year based on month (for Go Heels academic year logic)
-        let startYear = isGoHeels ? getYearForMonth(startMonthStr) : new Date().getFullYear();
-        let endYear = isGoHeels ? getYearForMonth(endMonthStr) : new Date().getFullYear();
+        // no year on the page: work it out from today (a range such as "Dec 30 - Jan 2" runs into the next year)
+        const baseYear = seasonYearFor(startMonth, startDay);
+        let startYear = isGoHeels ? getYearForMonth(startMonthStr) : baseYear;
+        let endYear = isGoHeels ? getYearForMonth(endMonthStr) : (endMonth < startMonth ? baseYear + 1 : baseYear);
 
         const dates = [];
 
@@ -683,7 +718,7 @@ async function scrapeMizzouMB(browser) {
 
     try {
         console.log(`\n🚀 Scraping Mizzou Men's Basketball Schedule...`);
-        await page.goto('https://mutigers.com/sports/mens-basketball/schedule/season/2026-27', {
+        await page.goto(`https://mutigers.com/sports/mens-basketball/schedule/season/${currentSeasonStart()}-${String(currentSeasonStart() + 1).slice(2)}`, {
             waitUntil: 'domcontentloaded',
             timeout: 30000
         });
@@ -1105,7 +1140,7 @@ async function scrapeMizzouE(browser) {
 }
 // Providence Park Timber MAIN FUNCTIOn
 //date format
-function formatDatePT(dateStr, defaultYear = '2026') {
+function formatDatePT(dateStr, defaultYear = String(THIS_YEAR)) {
     if (!dateStr || dateStr === 'TBA') return dateStr;
 
     // Clean up the string but DO NOT remove slashes anymore
@@ -1157,7 +1192,7 @@ function formatTimePT(timeStr) {
 // confirms the page is on #competition=all&date=2027-01-01, STAYS there (no more page.goto),
 // and scrapes the home matches at Providence Park.
 async function scrapeProvidenceT(browser) {
-    const TARGET_YEAR = '2027';
+    const TARGET_YEAR = String(NEXT_YEAR_NUM); // the next calendar year's season tab
     const TARGET_HASH = `#competition=all&date=${TARGET_YEAR}-01-01`;
 
     const context = await browser.newContext({
@@ -1371,7 +1406,7 @@ function formatDateThorns(dateStr) {
     if (textMatch) {
         const month = monthMap[textMatch[1].toLowerCase().substring(0, 3)];
         const day = textMatch[2].padStart(2, '0');
-        if (month) return `2026-${month}-${day}`;
+        if (month) return `${THIS_YEAR}-${month}-${day}`;
     }
     return dateStr;
 }
@@ -1535,7 +1570,7 @@ function formatDateSD(dateStr) {
     if (match) {
         const month = monthMap[match[1].toLowerCase().substring(0, 3)];
         const day = match[2].padStart(2, '0');
-        return `2026-${month}-${day}`;
+        return `${THIS_YEAR}-${month}-${day}`;
     }
     return dateStr;
 }
@@ -1659,7 +1694,7 @@ function formatDateDash(dateStr) {
     if (match) {
         const month = monthMap[match[1].toLowerCase().substring(0, 3)];
         const day = match[2].padStart(2, '0');
-        return `2026-${month}-${day}`;
+        return `${THIS_YEAR}-${month}-${day}`;
     }
     return dateStr;
 }
@@ -1752,7 +1787,7 @@ function formatDateSU(dateStr) {
     if (numericMatch) {
         const month = numericMatch[1].padStart(2, '0');
         const day = numericMatch[2].padStart(2, '0');
-        return `2026-${month}-${day}`;
+        return `${THIS_YEAR}-${month}-${day}`;
     }
     return dateStr;
 }
@@ -1767,7 +1802,7 @@ function formatTimeSU(timeStr) {
 }
 
 async function scrapeSubaruUnion(browser) {
-    const NEXT_YEAR = '2027';
+    const NEXT_YEAR = String(NEXT_YEAR_NUM); // the next calendar year's season tab
     const NEXT_YEAR_HASH = `#competition=all&date=${NEXT_YEAR}-01-01`;
 
     const context = await browser.newContext({
@@ -1997,7 +2032,7 @@ function formatDatePPL(dateStr) {
     if (match) {
         const month = monthMap[match[2].toLowerCase()];
         const day = match[3].padStart(2, '0');
-        return `2026-${month}-${day}`;
+        return `${THIS_YEAR}-${month}-${day}`;
     }
     return dateStr;
 }
@@ -2114,7 +2149,7 @@ async function scrapeSubaruPPL(browser) {
             if (!/^\d{4}-\d{2}-\d{2}$/.test(cleanDate)) {
                 const match = g.dateStr.match(/\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+(\d{1,2})/i);
                 if (match) {
-                    cleanDate = formatDate(`${match[0]} 2026`);
+                    cleanDate = formatDate(`${match[0]} ${THIS_YEAR}`);
                 } else {
                     cleanDate = '2026-08-29'; // Subaru Park PLL Championship / Quarterfinals weekend fallback
                 }
@@ -2253,7 +2288,7 @@ async function scrapeDSG(browser) {
     const seenGlobal = new Set();
 
     for (const item of allData) {
-    const key = `${item.venue}|${item.title}|${item.date}|${item.type}`;
+    const key = `${item.venue}|${item.title}|${item.date}|${item.time}|${item.type}`;
     if (!seenGlobal.has(key)) {
         seenGlobal.add(key);
         uniqueData.push(item);
@@ -2261,7 +2296,7 @@ async function scrapeDSG(browser) {
 }
 
     //log the count
-    console.log(`\nTotal events scraped: ${allData.length}`);
+    console.log(`\nTotal events scraped: ${allData.length} (${uniqueData.length} after removing exact duplicates)`);
 
     // write to CSV
     const csvWriter = createCsvWriter({
@@ -2276,8 +2311,8 @@ async function scrapeDSG(browser) {
     });
 
     // write the data
-    if (allData.length > 0) {
-        await csvWriter.writeRecords(allData);
+    if (uniqueData.length > 0) {
+        await csvWriter.writeRecords(uniqueData);
         console.log('Done! All events saved to calendar-3.csv');
     } else {
         console.log('No data to write to CSV.');

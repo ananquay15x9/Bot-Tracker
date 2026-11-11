@@ -1,6 +1,40 @@
 const { chromium } = require('playwright');
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 
+//========================================
+// YEAR HELPERS (replaces the years that used to be typed into this file)
+// Many of these pages show dates with no year ("Nov 14"). The year is now worked out from today's date, so
+// nothing needs editing when the calendar turns over.
+//
+//   seasonYearFor(month, day)  for an Aug-Jul sports season or an events list. The season counts as started on
+//                              the most recent July 1: Aug-Dec belong to that year, Jan-Jun to the next, and
+//                              July to the nearest July ahead.
+//   yearForText("Sat, Nov 14") the same, reading the month and day out of a piece of text.
+//   THIS_YEAR / NEXT_YEAR_NUM  for calendar-year leagues (MLS, NWSL, PLL): this calendar year and the next.
+const MONTH_NUMBERS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+const THIS_YEAR = new Date().getFullYear();
+const NEXT_YEAR_NUM = THIS_YEAR + 1;
+
+function currentSeasonStart(now = new Date()) {
+    return (now.getMonth() + 1) >= 7 ? now.getFullYear() : now.getFullYear() - 1;
+}
+
+function seasonYearFor(month, day = 1, now = new Date()) {
+    month = Number(month);
+    if (!(month >= 1 && month <= 12)) return now.getFullYear();
+    const start = currentSeasonStart(now);
+    if (month >= 8) return start;       // Aug - Dec
+    if (month <= 6) return start + 1;   // Jan - Jun
+    // July: the nearest one ahead (this year's up to and including July itself, otherwise next year's)
+    return (now.getMonth() + 1) >= 8 ? now.getFullYear() + 1 : now.getFullYear();
+}
+
+function yearForText(text, now = new Date()) {
+    const m = String(text || '').match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*(\d{1,2})?/i);
+    if (!m) return now.getFullYear();
+    return seasonYearFor(MONTH_NUMBERS[m[1].toLowerCase()], m[2] ? parseInt(m[2], 10) : 1, now);
+}
+
 // ========================== HELPER FUNCTIONS ==========================
 
 function toTitleCase(str) {
@@ -36,11 +70,11 @@ function formatDate(dateStr) {
 
     dateStr = dateStr.replace(/\//g, '').trim();
 
-    const match = dateStr.match(/([A-Za-z]+)\.?\s+(\d+)(?:\s+(\d{4}))?/);
+    const match = dateStr.match(/([A-Za-z]+)\.?\s+(\d+)(?:,?\s+(\d{4}))?/);
     if (match) {
         const month = monthMap[match[1].toLowerCase().substring(0, 3)];
         const day = match[2].padStart(2, '0');
-        const year = match[3] || '2026';
+        const year = match[3] || seasonYearFor(parseInt(month, 10), parseInt(day, 10));
 
         if (month) {
             return `${year}-${month}-${day}`;
