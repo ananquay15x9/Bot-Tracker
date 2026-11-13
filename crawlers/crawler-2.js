@@ -2,15 +2,6 @@ const { chromium } = require('playwright');
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 
 //========================================
-// YEAR HELPERS (replaces the years that used to be typed into this file)
-// Many of these pages show dates with no year ("Nov 14"). The year is now worked out from today's date, so
-// nothing needs editing when the calendar turns over.
-//
-//   seasonYearFor(month, day)  for an Aug-Jul sports season or an events list. The season counts as started on
-//                              the most recent July 1: Aug-Dec belong to that year, Jan-Jun to the next, and
-//                              July to the nearest July ahead.
-//   yearForText("Sat, Nov 14") the same, reading the month and day out of a piece of text.
-//   THIS_YEAR / NEXT_YEAR_NUM  for calendar-year leagues (MLS, NWSL, PLL): this calendar year and the next.
 const MONTH_NUMBERS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
 const THIS_YEAR = new Date().getFullYear();
 const NEXT_YEAR_NUM = THIS_YEAR + 1;
@@ -25,7 +16,7 @@ function seasonYearFor(month, day = 1, now = new Date()) {
     const start = currentSeasonStart(now);
     if (month >= 8) return start;       // Aug - Dec
     if (month <= 6) return start + 1;   // Jan - Jun
-    // July: the nearest one ahead (this year's up to and including July itself, otherwise next year's)
+
     return (now.getMonth() + 1) >= 8 ? now.getFullYear() + 1 : now.getFullYear();
 }
 
@@ -205,7 +196,6 @@ function parseAuburnDate(rawDateStr, fallbackMonth = '') {
         'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12'
     };
 
-    // If it's just a number like "18", combine it with the fallback month if available
     if (/^\d{1,2}$/.test(cleaned) && fallbackMonth) {
         cleaned = `${fallbackMonth} ${cleaned}`;
     }
@@ -358,7 +348,6 @@ async function scrapeJPJ(browser) {
         const cardSelector = '.schedule-event-item';
         await page.waitForSelector(cardSelector, { timeout: 15000 }).catch(() => {});
 
-        // Load more rows if pagination exists
         let hasMore = true;
         let attempts = 0;
         while (hasMore && attempts < 10) {
@@ -413,7 +402,7 @@ async function scrapeJPJ(browser) {
 
                 const opponent = cleanOpponent(rawOpponent);
 
-                // 4. Date Extraction: Target .schedule-event-date__month-day (NOT .schedule-event-date__weekday)
+                // 4. Date Extraction: Target .schedule-event-date__month-day 
                 const monthDayLoc = row.locator('.schedule-event-date__month-day').first();
                 if (await monthDayLoc.count() === 0) continue;
                 const rawMonthDay = (await monthDayLoc.innerText()).trim(); // e.g. "Nov 2"
@@ -490,8 +479,7 @@ async function scrapeVT(browser) {
     const venueData = [];
     const monthsToScrape = 12;
     const now = new Date();
-    // Start at the CURRENT month and read 12 months forward. (It used to start at January of the current year: that
-    // included games already played and never reached next year's games.)
+    // Start at the CURRENT month and read 12 months forward
     const targetStartMonth = `${now.toLocaleString('en-US', { month: 'long' })} ${now.getFullYear()}`;
     const today = now.toISOString().split('T')[0];
 
@@ -509,7 +497,6 @@ async function scrapeVT(browser) {
             let monthYearText = await header.innerText();
             let safetyCounter = 0;
 
-            // monthIndex() turns a heading such as "November 2026" into a number, so we know which way to click
             const monthIndex = (text) => {
                 const [m, y] = text.trim().split(/\s+/);
                 return parseInt(y, 10) * 12 + new Date(Date.parse(m + " 1, 2012")).getMonth();
@@ -728,8 +715,7 @@ async function scrapeRSL(browser) {
 
         const rawMatches = await readMatches();
 
-        // The page opens on TODAY's date, which is out of season (the 2026 season is over; the 2027 fixtures sit under later
-        // dates), so reading only what is showing finds nothing. The date lives in the page's web address: step it forward
+        // The date lives in the page's web address: step it forward
         // and read what each date shows. If changing it has no effect on the page, give up early and say so.
         const matchKey = (m) => `${m.urlDate}|${m.homeTeam}|${m.awayTeam}`;
         const known = new Set(rawMatches.map(matchKey));

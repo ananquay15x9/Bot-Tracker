@@ -2,15 +2,6 @@ const { chromium } = require('playwright');
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 
 //========================================
-// YEAR HELPERS (replaces the years that used to be typed into this file)
-// Many of these pages show dates with no year ("Nov 14"). The year is now worked out from today's date, so
-// nothing needs editing when the calendar turns over.
-//
-//   seasonYearFor(month, day)  for an Aug-Jul sports season or an events list. The season counts as started on
-//                              the most recent July 1: Aug-Dec belong to that year, Jan-Jun to the next, and
-//                              July to the nearest July ahead.
-//   yearForText("Sat, Nov 14") the same, reading the month and day out of a piece of text.
-//   THIS_YEAR / NEXT_YEAR_NUM  for calendar-year leagues (MLS, NWSL, PLL): this calendar year and the next.
 const MONTH_NUMBERS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
 const THIS_YEAR = new Date().getFullYear();
 const NEXT_YEAR_NUM = THIS_YEAR + 1;

@@ -2,15 +2,7 @@ const { chromium } = require('playwright');
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 
 //========================================
-// YEAR HELPERS (replaces the years that used to be typed into this file)
-// Many of these pages show dates with no year ("Nov 14"). The year is now worked out from today's date, so
-// nothing needs editing when the calendar turns over.
-//
-//   seasonYearFor(month, day)  for an Aug-Jul sports season or an events list. The season counts as started on
-//                              the most recent July 1: Aug-Dec belong to that year, Jan-Jun to the next, and
-//                              July to the nearest July ahead.
-//   yearForText("Sat, Nov 14") the same, reading the month and day out of a piece of text.
-//   THIS_YEAR / NEXT_YEAR_NUM  for calendar-year leagues (MLS, NWSL, PLL): this calendar year and the next.
+
 const MONTH_NUMBERS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
 const THIS_YEAR = new Date().getFullYear();
 const NEXT_YEAR_NUM = THIS_YEAR + 1;
@@ -602,7 +594,6 @@ async function scrapeEnterprise(browser) {
 async function scrapeGoHeels(browser) {
     const page = await browser.newPage();
     const venueData = [];
-    // The selector below matches a game's inner header AND its outer card, so every game is seen twice.
     const seenGames = new Set();
     try {
         await page.goto('https://goheels.com/sports/mens-basketball/schedule', { waitUntil: 'domcontentloaded', timeout: 30000 });
@@ -642,7 +633,7 @@ async function scrapeGoHeels(browser) {
                 const cardText = await card.innerText();
                 const cardTextLower = cardText.toLowerCase();
 
-                // Requirement 3: need to only scrape from 'Smith Center, Chapel Hill' only
+                // need to only scrape from 'Smith Center, Chapel Hill' only
                 if (!cardTextLower.includes('smith center') && !cardTextLower.includes('chapel hill')) {
                     continue;
                 }
@@ -713,10 +704,6 @@ async function scrapeGrandCasino(browser) {
         await page.goto('https://www.grandcasinoarena.com/events', { waitUntil: 'domcontentloaded', timeout: 30000 });
 
         // Click "Load More" until the button is gone (that's the end of the list).
-        // The button hides itself while loading and can be covered by popups, so:
-        //  - click it with a DOM click (works even if something overlaps it)
-        //  - wait up to 15s for new events after each click
-        //  - only stop once the button has been gone for ~3s, or 3 clicks in a row add nothing
         const gcLinkSelector = 'h3.title a, .info h3 a';
         const gcButtonPresent = () => page.evaluate(() => {
             const btn = document.querySelector('#loadMoreEvents');
@@ -785,9 +772,6 @@ async function scrapeGrandCasino(browser) {
                 let year = ""; // filled in below: the year shown on the page, else the previous event's, else worked out from today
                 let eventTime = "TBA";
 
-                // Read the date ONLY from the sidebar "Date" item. The first .m-date__* on the
-                // page can be a different date (e.g. the on-sale date), which gave wrong dates
-                // like 2026-11-09 for a January 2027 game.
                 const dateItem = page.locator('.eventDetailList .sidebar_event_date').first();
                 const dateScope = (await dateItem.count() > 0) ? dateItem : page;
                 const monthEl = dateScope.locator('.m-date__month').first();
@@ -809,8 +793,6 @@ async function scrapeGrandCasino(browser) {
                     eventTime = await startsEl.innerText();
                 }
 
-                // Build the date directly. (The shared formatDate() ignores a year written as
-                // "Jan 2, 2027" because of the comma, and falls back to 2026.)
                 const gcMonths = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
                                    jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
                 const gcMonth = gcMonths[month.trim().toLowerCase().slice(0, 3)];
@@ -1041,11 +1023,6 @@ async function scrapeAmerant(browser) {
 
 
 // Canada Life Centre Main Function
-// The calendar is an older FullCalendar month grid: day cells are a table, and the
-// events are drawn ON TOP of it with absolute positions, so an event isn't inside its
-// day cell in the HTML. Each event is matched to a day by where it sits on screen
-// (its left edge and middle fall inside that day's cell).
-// "9a" / "7:30p" in .fc-event-time is the start time (local Winnipeg time, no conversion).
 function extractCanadaLifeMonth() {
     const clean = s => (s || '').replace(/\s+/g, ' ').trim();
     const monthNames = ['january','february','march','april','may','june','july','august','september','october','november','december'];
@@ -1303,8 +1280,6 @@ function parseKickoff(text) {
     return '';
 }
 
-// Fallback for when a game card's own elements aren't recognised: reads the date, time and opponent out of the
-// card's plain text instead (the text looks like "Home / vs. / FootballKentucky / Memorial StadiumColumbia, Mo.").
 function parseFaurotCardText(raw) {
     const lines = String(raw || '').split('\n').map((l) => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
     const text = lines.join(' ');
@@ -1369,8 +1344,6 @@ async function scrapeFaurotField(browser) {
                 const locationText = (await locationLoc.count() > 0) ? await locationLoc.innerText() : "";
                 const fullLocation = `${venueType} ${venueName} ${locationText}`.toUpperCase();
 
-                // The venue text can sit in an element this list doesn't know about (it reads "Memorial StadiumColumbia, Mo."
-                // with no space), so the whole card's text is checked as well.
                 const faurotText = /MEMORIAL\s*STADIUM|FAUROT/;
                 const isHomeGame = fullLocation.includes('HOME') ||
                                    faurotText.test(fullLocation) ||
@@ -1524,7 +1497,7 @@ async function scrapeVillanova(browser) {
                 for (const event of events) {
                     try {
                         const eventText = await event.innerText();
-                        // Requirement: scrape only villanova, Pa. (exclude Philadelphia, Pa. or others)
+                        // Requirement: scrape only villanova, Pa. 
                         const locLower = eventText.toLowerCase();
                         if (!locLower.includes('villanova, pa')) {
                             continue;

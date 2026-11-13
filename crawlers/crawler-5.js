@@ -2,12 +2,6 @@ const { chromium } = require('playwright');
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 
 // =========================================================================
-// ANGEL OF THE WINDS ARENA (Everett, WA)
-// List page -> click "More Events" until everything is loaded -> open each
-// event's detail page -> read title, date(s) and time(s).
-// Times on the site are already local (PT), so no time zone conversion.
-// =========================================================================
-
 const AOTW_LIST_URL = 'https://www.angelofthewindsarena.com/events/venue/angel-of-the-winds-arena';
 const AOTW_MONTHS = {
     jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
@@ -27,9 +21,6 @@ function isoDateAOTW(year, month, day) {
 
 // Parses the sidebar date into a list of days.
 //   "Friday, November 6, 2026"            -> [2026-11-06]
-//   "November 13 - 15, 2026"              -> [2026-11-13, 2026-11-14, 2026-11-15]
-//   "November 30 - December 2, 2026"      -> [2026-11-30, 2026-12-01, 2026-12-02]
-//   "December 31, 2026 - January 2, 2027" -> [2026-12-31, 2027-01-01, 2027-01-02]
 function parseDateRangeAOTW(text) {
     const t = (text || '').replace(/\s+/g, ' ').trim();
     const re = /([A-Za-z]{3,})\.?\s+(\d{1,2})(?:,?\s*(\d{4}))?(?:\s*[-–]\s*(?:([A-Za-z]{3,})\.?\s+)?(\d{1,2})(?:,?\s*(\d{4}))?)?/;
