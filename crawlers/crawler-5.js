@@ -176,10 +176,6 @@ async function scrapeAngelOfTheWinds(browser) {
         await page.waitForSelector(linkSelector, { timeout: 20000 });
 
         // ---- Click "More Events" until the button is gone (that's the end of the list).
-        // The button hides/disables itself while loading and can be covered by popups, so:
-        //  - click it with a DOM click (works even if something overlaps it)
-        //  - wait up to 15s for new events
-        //  - only stop once the button has been gone for a few seconds, or 3 clicks in a row add nothing
         const countEvents = () => page.locator(linkSelector).count();
         const buttonPresent = () => page.evaluate(() => {
             const btn = document.querySelector('#loadMoreEvents');
@@ -297,10 +293,6 @@ async function scrapeAngelOfTheWinds(browser) {
 
 // =========================================================================
 // FIRST HORIZON COLISEUM (Greensboro Coliseum Complex)
-// List page -> scroll to the bottom (and click "More Events" if it shows) ->
-// open each event's detail page -> keep only Venue = "First Horizon Coliseum".
-// Times on the site are already local (ET), so no time zone conversion.
-// =========================================================================
 
 const FHC_LIST_URL = 'https://www.gsocomplex.com/events/all';
 
@@ -343,7 +335,6 @@ function extractFHCDetail() {
     const startsText = sidebarText('.sidebar_event_starts');
     const venueText = sidebarText('.sidebar_event_venue');
 
-    // Keep line breaks in the description so "Women's Game - 5:30 p.m." stays on its own line
     const descEl = document.querySelector('.event_description .description_inner, .event_description');
     let description = '';
     if (descEl) {
@@ -528,11 +519,6 @@ async function scrapeFirstHorizon(browser) {
 
 // =========================================================================
 // EAGLEBANK ARENA (Fairfax, VA)
-// List page -> click "More Events" until the button is gone -> read each card.
-// Single-date cards are read straight from the grid; date ranges
-// (e.g. "Apr 29 - May 2, 2027") open the detail page and read every showing.
-// Times on the site are already local (ET), so no time zone conversion.
-// =========================================================================
 
 const EBA_LIST_URL = 'https://www.eaglebankarena.com/events';
 
@@ -753,13 +739,6 @@ async function scrapeEagleBank(browser) {
 
 // =========================================================================
 // TEXAS A&M - REED ARENA (Ticketmaster)
-// Venue page -> click "More Events" until it disappears -> read every event.
-// Each event's "Find Tickets" link carries hidden text like
-//   "Texas A&M Aggies Womens Basketball vs. ... , 11/5/26, 8:00 PM"
-// which has the title, date and time together. Ticketmaster's class names
-// (sc-xxxx) change often, so the scraper relies on data-testid and that text.
-// Times on the page are already local (CT), so no time zone conversion.
-// =========================================================================
 
 const REED_URL = 'https://www.ticketmaster.com/reed-arena-tickets-college-station/venue/475425';
 
@@ -910,14 +889,6 @@ async function scrapeReedArena(browser) {
 
 // =========================================================================
 // UNM - THE PIT (Ticketmaster: Albuquerque sports listing)
-// The page lists ALL Albuquerque sports events, so only events whose venue is
-// "Albuquerque, NM The Pit (University Arena)" are kept.
-// Click "More Events" until it disappears, then read every "Find Tickets" link.
-// Each link has hidden text like:
-//   "New Mexico Lobos Mens Basketball vs. Arkansas Little Rock Trojans Mens Basketball,
-//    Albuquerque, NM The Pit (University Arena)11/10/26, 7:00 PM"
-// Times on the page are already local (MT), so no time zone conversion.
-// =========================================================================
 
 const PIT_URL = 'https://www.ticketmaster.com/discover/albuquerque?categoryId=KZFzniwnSyZfZ7v7nE';
 
@@ -937,7 +908,6 @@ function categorizePit(title) {
     return 'Other';
 }
 
-// Runs in the Ticketmaster page: one entry per "Find Tickets" link, plus its row's text
 function extractPitEvents() {
     const clean = s => (s || '').replace(/\s+/g, ' ').trim();
     return Array.from(document.querySelectorAll('a[data-testid="event-list-link"]')).map(a => {
@@ -950,7 +920,6 @@ function extractPitEvents() {
     });
 }
 
-// Splits "Title, Albuquerque, NM The Pit (University Arena)11/10/26, 7:00 PM"
 function parsePitLabel(label) {
     const text = (label || '').replace(/^(Find|See|Buy)\s+Tickets\s*/i, '').trim();
     const dm = text.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:,\s*(.*))?$/);
@@ -1088,11 +1057,6 @@ async function scrapeThePit(browser) {
 
 // =========================================================================
 // WICHITA STATE - KOCH ARENA (wichita.edu calendar, location 33 = Koch Arena)
-// The page is already filtered to Koch Arena. Each event:
-//   <time datetime="2026-11-04T06:30:00-06:00">6:30 p.m.</time> <span itemprop="name">Men's Basketball vs. CSUN</span>
-// The datetime's hour is NOT reliable (6:30 p.m. shows as 06:30), so the date comes
-// from datetime and the time from the visible text. Times are already local (CT).
-// =========================================================================
 
 const KOCH_URL = 'https://www.wichita.edu/calendar/index.php?com=location&lID=33';
 
@@ -1188,16 +1152,6 @@ async function scrapeKochArena(browser) {
 
 // =========================================================================
 // WSU - BEASLEY COLISEUM (Vivid Seats venue page)
-// eVenue blocks automated browsers ("Access to this page has been denied"),
-// so this reads Vivid Seats instead. Each card has:
-//   title  "Idaho Vandals at Washington State Cougars Womens Basketball"
-//   date   "Mon Nov 9" • time "11:00AM"
-//   venue  "Beasley Coliseum" • "Pullman, WA"
-// Vivid Seats class names are generated (mui-xxxx), so the scraper finds cards by
-// their title element and reads the date/time/venue by text pattern.
-// Times on the page are already local (PT), so no time zone conversion.
-// =========================================================================
-
 const BEASLEY_URL = 'https://www.vividseats.com/beasley-coliseum-tickets/venue/163';
 
 // Runs in the Vivid Seats page: one entry per event card
@@ -1328,12 +1282,6 @@ async function scrapeBeasley(browser) {
 
 // =========================================================================
 // BUTLER - HINKLE FIELDHOUSE (Ticketmaster venue page)
-// Same Ticketmaster layout as Reed Arena: click "More Events" until it's gone,
-// then read each "Find Tickets" link's hidden text:
-//   "Butler University Bulldogs Womens Basketball vs. North Dakota State Bison Womens Basketball, 11/12/26, 7:00 PM"
-// Reuses extractReedEvents() and parseReedLabel() (12:00 AM -> TBA).
-// Times on the page are already local (ET), so no time zone conversion.
-// =========================================================================
 
 const HINKLE_URL = 'https://www.ticketmaster.com/hinkle-fieldhouse-tickets-indianapolis/venue/41118';
 
@@ -1461,17 +1409,6 @@ async function scrapeHinkle(browser) {
 
 // =========================================================================
 // BUTLER - HINKLE FIELDHOUSE (butlersports.com SIDEARM calendar grid)
-// Trial source to compare with the Ticketmaster version (scrapeHinkle).
-// Rows are labelled 'Butler - Hinkle Fieldhouse (butlersports)' so the two
-// sources can be told apart in the CSV.
-//
-// The calendar is built with Knockout, so each event <li> carries its data
-// (date, time, sport, opponent, home/away). The scraper reads that data via
-// ko.dataFor(); if it isn't available it falls back to reading the cell text.
-// Kept: HOME games for the sports played at Hinkle (MBB, WBB, volleyball).
-// Clicks "Next Month" to move through the season.
-// Times are already local (ET); " EST" is added to match the Ticketmaster version.
-// =========================================================================
 
 const HINKLE_SIDEARM_URL = 'https://butlersports.com/calendar';
 const HINKLE_SIDEARM_MONTHS = 8;   // Nov -> Jun covers basketball + volleyball

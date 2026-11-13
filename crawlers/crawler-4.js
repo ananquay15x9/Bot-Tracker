@@ -16,7 +16,7 @@ function seasonYearFor(month, day = 1, now = new Date()) {
     const start = currentSeasonStart(now);
     if (month >= 8) return start;       // Aug - Dec
     if (month <= 6) return start + 1;   // Jan - Jun
-    // July: the nearest one ahead (this year's up to and including July itself, otherwise next year's)
+
     return (now.getMonth() + 1) >= 8 ? now.getFullYear() + 1 : now.getFullYear();
 }
 
@@ -246,9 +246,7 @@ async function scrapeEnmarket(browser) {
                     constructedDateStr = await hiddenDateLoc.innerText();
                 }
 
-                // Ticketmaster's class names (bZWmdt, fCBXcp...) change often, so read the time from the
-                // card's full text instead. Remove the title first so times inside a title
-                // (e.g. "Check In By 1:30pm") aren't mistaken for the start time.
+
                 let rawTime = "TBA";
                 const cardText = ((await item.textContent()) || '').replace(/\s+/g, ' ');
                 const textWithoutTitle = cardText.split(rawTitle).join(' ');
@@ -414,15 +412,9 @@ async function scrapeXfinityS(browser) {
 
                     
 
-                    // Split the popup into one block per game WITHOUT relying on card class names.
-                    // Each game has one sport header; for each header, climb up the page until we
-                    // reach the biggest wrapper that still holds only that one game. Everything
-                    // (location, opponent, time) is then read from inside that wrapper, so a
-                    // multi-game day can't mix one game's location with another game.
-                    // On a single-game day the wrapper is the whole popup, same as before.
+
                     const games = await dialogContainer.evaluate((dialog) => {
                         const HEADER_SEL = '[data-test-id="s-game-card-standard__header-sport-name"], .s-game-card__header-sport-name';
-                        // Matches the site's markup:
                         //   <a data-test-id="s-game-card-facility-and-location__game-facility-title-link"
                         //      href="/facilities/xfinity-center/8">XFINITY Center</a>
                         //   <span data-test-id="s-game-card-facility-and-location__standard-location-details">College Park, MD</span>
@@ -477,8 +469,7 @@ async function scrapeXfinityS(browser) {
                     for (const game of games) {
                         // LOCATION CHECK: the city must be exactly "College Park, MD", and the venue must be
                         // XFINITY Center or left blank (home games like MBB vs. #9 Virginia show an empty
-                        // venue and only "College Park, MD"). A named venue that isn't Xfinity (SECU Stadium,
-                        // Ludwig Field, Bob "Turtle" Smith Stadium...) is rejected, and so is
+                        // venue and only "College Park, MD").
                         // "College Park, MD / GrillMarX" (watch parties).
                         const facilityName = (game.facility || '').trim();
                         const isXfinityFacility =
@@ -864,7 +855,6 @@ async function scrapeLSU(browser) {
 
     console.log("🏁 Starting Crawler 4 Suite Execution...");
 
-    // Run a single scraper while debugging, e.g.:  ONLY=xfinity node crawler-4.js
     const scrapers = {
         enmarket: scrapeEnmarket,
         xfinity: scrapeXfinityS,
@@ -878,7 +868,6 @@ async function scrapeLSU(browser) {
 
     const allData = results.flat();
 
-    // Global Deduplication across all 4 venues
     const uniqueData = [];
     const seenEntries = new Set();
 

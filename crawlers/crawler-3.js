@@ -162,8 +162,6 @@ function expandDateRange(dateStr, isGoHeels = false) {
         const startMonth = monthMap[startMonthStr];
         const endMonth = monthMap[endMonthStr];
 
-        // Determine year based on month (for Go Heels academic year logic)
-        // no year on the page: work it out from today (a range such as "Dec 30 - Jan 2" runs into the next year)
         const baseYear = seasonYearFor(startMonth, startDay);
         let startYear = isGoHeels ? getYearForMonth(startMonthStr) : baseYear;
         let endYear = isGoHeels ? getYearForMonth(endMonthStr) : (endMonth < startMonth ? baseYear + 1 : baseYear);
@@ -414,7 +412,6 @@ async function scrapeBaylor(browser) {
     today.setHours(0, 0, 0, 0);
     const seenEvents = new Set();
 
-    // Query direct Men's and Women's Basketball schedules to guarantee 100% full coverage
     const directSchedules = [
         { 
             url: 'https://baylorbears.com/sports/mens-basketball/schedule', 
@@ -468,7 +465,6 @@ async function scrapeBaylor(browser) {
             console.log(`📋 Found ${rawGames.length} ${sched.teamPrefix} home games at Foster Pavilion.`);
 
             for (const game of rawGames) {
-                // Parse date cleanly (e.g. "Nov 2 (Mon)" -> "Nov 2")
                 let cleanMonthDay = game.rawDate.replace(/\(.*\)/g, '').trim();
                 const monthStr = cleanMonthDay.split(' ')[0].toLowerCase().substring(0, 3);
                 const yr = getYearForMonth(monthStr);
@@ -569,14 +565,13 @@ async function scrapeXfinityE(browser) {
 
                 if (!title || title.toLowerCase() === 'find tickets') return;
 
-                // 2. EXTRACT DATE & TIME WITHOUT VOLATILE CSS HASHES
+                // 2. EXTRACT DATE & TIME
                 const hiddenSpans = Array.from(
                     item.querySelectorAll('.VisuallyHidden-sc-8buqks-0 span, [class*="VisuallyHidden"] span')
                 ).map(el => el.innerText.trim()).filter(Boolean);
 
                 const dateRaw = hiddenSpans.length > 0 ? hiddenSpans[0] : "";
 
-                // Check remaining hidden spans and visible row text for time
                 const candidateTimeText = [
                     ...hiddenSpans.slice(1),
                     item.innerText || ""
@@ -651,7 +646,6 @@ async function scrapeXfinityE(browser) {
 }
 
 // MizzouMB main function
-// KILL TRANSCEND
 async function setupTranscendKillerMizzouMB(page) {
     await page.addInitScript(() => {
         const kill = () => {
@@ -682,7 +676,6 @@ function formatTimeMMB(rawTime) {
     let clean = rawTime.replace(/\./g, '').toLowerCase().trim();
 
     // 2. Standardize AM/PM casing and spacing
-    // This turns "7 pm" or "7:30 pm" into "7:00PM" or "7:30PM"
     let formatted = clean.replace(/\s*(am|pm)/i, (match, p1) => p1.toUpperCase());
 
     // 3. Ensure minutes exist (7PM -> 7:00PM)
@@ -733,7 +726,7 @@ async function scrapeMizzouMB(browser) {
                 let opponent = (await opponentLoc.count() > 0) ? await opponentLoc.innerText() : "";
                 if (!opponent) continue;
 
-                // 3. ACCURATE DATE & ISO TIME EXTRACTION (Using datetime attribute on <time>)
+                // 3. ACCURATE DATE & ISO TIME EXTRACTION
                 let cleanDate = "TBA";
                 let dtAttr = "";
                 const timeTag = card.locator('time[datetime]').first();
@@ -753,7 +746,7 @@ async function scrapeMizzouMB(browser) {
                 }
 
                 // 4. TIME EXTRACTION
-                // Target .schedule-event-item-result__label directly (do NOT combine with .schedule-event-date__time)
+                // Target .schedule-event-item-result__label directly
                 let cleanTime = "TBA";
                 const resultTimeLoc = card.locator('.schedule-event-item-result__label, .schedule-event-item-result strong').first();
                 if (await resultTimeLoc.count() > 0) {
@@ -896,7 +889,7 @@ async function scrapeMizzouWB(browser) {
                 let opponent = (await opponentLoc.count() > 0) ? await opponentLoc.innerText() : "";
                 if (!opponent) continue;
 
-                // 3. ACCURATE DATE & ISO TIME EXTRACTION (Using datetime attribute on <time>)
+                // 3. ACCURATE DATE & ISO TIME EXTRACTION
                 let cleanDate = "TBA";
                 let dtAttr = "";
                 const timeTag = card.locator('time[datetime]').first();
@@ -916,7 +909,7 @@ async function scrapeMizzouWB(browser) {
                 }
 
                 // 4. TIME EXTRACTION
-                // Target .schedule-event-item-result__label directly (do NOT combine with .schedule-event-date__time)
+                // Target .schedule-event-item-result__label directly
                 let cleanTime = "TBA";
                 const resultTimeLoc = card.locator('.schedule-event-item-result__label, .schedule-event-item-result strong').first();
                 if (await resultTimeLoc.count() > 0) {
@@ -1083,8 +1076,7 @@ async function scrapeMizzouE(browser) {
             if (!ev.title) continue;
 
             let cleanTitle = ev.title.replace(/\s+/g, ' ').trim().toUpperCase();
-            
-            // Normalize TM title e.g. "2026-27 MIZZOU MEN'S BASKETBALL V CLEVELAND ST." -> "MISSOURI VS CLEVELAND STATE"
+
             let eventType = categorizeMizzouArena(cleanTitle);
 
             if (cleanTitle.includes("MEN'S BASKETBALL V ") || cleanTitle.includes("MENS BASKETBALL V ")) {
@@ -1234,8 +1226,6 @@ async function scrapeProvidenceT(browser) {
             }
         }
 
-        // If the 2027 button wasn't visible, the season control may be a dropdown showing another
-        // year (e.g. "2026"). Open it and pick 2027 from the list.
         if (!onTargetYear()) {
             const seasonToggle = page.locator('button, [role="button"]')
                 .filter({ has: page.locator('.mls-o-buttons__svg') })
@@ -1256,7 +1246,6 @@ async function scrapeProvidenceT(browser) {
             }
         }
 
-        // Last resort: set the hash on the SAME page (no reload), which is what the button does
         if (!onTargetYear()) {
             console.log("   ↪︎ Button didn't switch the season, setting the 2027 hash directly...");
             await page.evaluate(h => { window.location.hash = h; }, TARGET_HASH);
@@ -1428,7 +1417,6 @@ async function scrapeProvidenceThorns(browser) {
             timeout: 30000 
         });
 
-        // Bypass OneTrust cookie banner if visible
         try {
             const cookieBtn = page.locator('#onetrust-accept-btn-handler');
             if (await cookieBtn.isVisible({ timeout: 4000 })) {
@@ -1454,7 +1442,7 @@ async function scrapeProvidenceThorns(browser) {
         });
         await page.waitForTimeout(1500);
 
-        // Extract match details directly from Webflow collection items
+
         const rawMatches = await page.evaluate(() => {
             const results = [];
             const items = document.querySelectorAll('.schedule-collection-item, .match-row');
@@ -2166,7 +2154,6 @@ async function scrapeSubaruPPL(browser) {
 
     return venueData;
 }
-// DICKS SPORTING GOODS MAIN FUNCTION
 // DICKS SPORTING GOODS MAIN FUNCTION
 function categorizeDSG(title) {
     const text = title.toLowerCase();
