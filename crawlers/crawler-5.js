@@ -1,19 +1,6 @@
 const { chromium } = require('playwright');
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 
-// Removes rows that are exact copies of one another (same venue, title, date, time and type).
-function dedupeRows(rows) {
-    const seen = new Set();
-    const unique = [];
-    for (const row of rows) {
-        const key = [row.venue, row.title, row.date, row.time, row.type].join('|');
-        if (seen.has(key)) continue;
-        seen.add(key);
-        unique.push(row);
-    }
-    return unique;
-}
-
 // =========================================================================
 // ANGEL OF THE WINDS ARENA (Everett, WA)
 // List page -> click "More Events" until everything is loaded -> open each
@@ -105,7 +92,9 @@ function categorizeAOTW(title) {
 function extractAOTWDetail() {
     const clean = s => (s || '').replace(/\s+/g, ' ').trim();
 
-    const title = clean(document.querySelector('h1.title')?.textContent);
+    const title = clean(document.querySelector('h1.title')?.textContent)
+        || clean(document.querySelector('h1')?.textContent)
+        || clean(document.querySelector('meta[property="og:title"]')?.getAttribute('content'));
 
     const dateLi = document.querySelector('.eventDetailList .sidebar_event_date');
     let dateText = '';
@@ -136,18 +125,26 @@ function extractAOTWDetail() {
 
 // Opens a detail page and waits for its title; retries once with a longer wait
 // (pages load slowly when several venue browsers run at the same time)
+// Opens a detail page. Waits for the event title, but never for long:
+//  - normal pages have h1.title; some (e.g. a redirected or special event page) don't,
+//    so any <h1> or the sidebar date list also counts as "loaded"
+//  - one retry for a slow page, then give up on that event and move on
+// Returns false if the page/browser has been closed, so the caller can stop.
 async function gotoDetailWithRetry(page, url) {
     for (let attempt = 1; attempt <= 2; attempt++) {
+        if (page.isClosed()) return false;
         try {
-            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: attempt === 1 ? 30000 : 60000 });
-            await page.waitForSelector('h1.title', { timeout: attempt === 1 ? 15000 : 30000 });
-            return;
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: attempt === 1 ? 25000 : 40000 });
+            await page.waitForSelector('h1.title, h1, .eventDetailList', { state: 'attached', timeout: attempt === 1 ? 10000 : 15000 });
+            return true;
         } catch (err) {
+            if (page.isClosed() || /has been closed/i.test(err.message)) return false;
             if (attempt === 2) throw err;
             console.log(`   ↻ Slow page, retrying: ${url}`);
-            await page.waitForTimeout(2000);
+            await page.waitForTimeout(1500).catch(() => {});
         }
     }
+    return true;
 }
 
 async function scrapeAngelOfTheWinds(browser) {
@@ -243,9 +240,17 @@ async function scrapeAngelOfTheWinds(browser) {
         console.log(`📋 Found ${detailUrls.length} Angel of the Winds events.`);
 
         // ---- Open each detail page
+        let checked = 0;
         for (const url of detailUrls) {
+            checked++;
+            if (checked % 10 === 0 || checked === detailUrls.length) {
+                console.log(`   ↪︎ Detail pages checked: ${checked}/${detailUrls.length}`);
+            }
             try {
-                await gotoDetailWithRetry(page, url);
+                if (!(await gotoDetailWithRetry(page, url))) {
+                    console.log('   ⚠️ Browser page was closed, stopping this venue.');
+                    break;
+                }
 
                 const d = await page.evaluate(extractAOTWDetail);
                 if (!d.title) continue;
@@ -288,7 +293,7 @@ async function scrapeAngelOfTheWinds(browser) {
             }
         }
 
-        console.log(`🏁 Angel of the Winds: ${venueData.length} rows.`);
+        console.log(`🏁 Angel of the Winds: all ${detailUrls.length} events checked, ${venueData.length} rows. Closing.`);
     } catch (err) {
         console.error('❌ Angel of the Winds failed:', err.message);
     } finally {
@@ -340,7 +345,9 @@ function extractFHCDetail() {
         return clean(clone.textContent);
     };
 
-    const title = clean(document.querySelector('h1.title')?.textContent);
+    const title = clean(document.querySelector('h1.title')?.textContent)
+        || clean(document.querySelector('h1')?.textContent)
+        || clean(document.querySelector('meta[property="og:title"]')?.getAttribute('content'));
     const dateText = sidebarText('.sidebar_event_date');
     const startsText = sidebarText('.sidebar_event_starts');
     const venueText = sidebarText('.sidebar_event_venue');
@@ -445,9 +452,17 @@ async function scrapeFirstHorizon(browser) {
 
         let otherVenue = 0;
 
+        let checked = 0;
         for (const url of detailUrls) {
+            checked++;
+            if (checked % 10 === 0 || checked === detailUrls.length) {
+                console.log(`   ↪︎ Detail pages checked: ${checked}/${detailUrls.length}`);
+            }
             try {
-                await gotoDetailWithRetry(page, url);
+                if (!(await gotoDetailWithRetry(page, url))) {
+                    console.log('   ⚠️ Browser page was closed, stopping this venue.');
+                    break;
+                }
 
                 const d = await page.evaluate(extractFHCDetail);
                 if (!d.title) continue;
@@ -582,7 +597,9 @@ function extractEBACards() {
 // Runs in the detail page: every showing (visible or under "More Showings")
 function extractEBAShowings() {
     const clean = s => (s || '').replace(/\s+/g, ' ').trim();
-    const title = clean(document.querySelector('h1.title')?.textContent);
+    const title = clean(document.querySelector('h1.title')?.textContent)
+        || clean(document.querySelector('h1')?.textContent)
+        || clean(document.querySelector('meta[property="og:title"]')?.getAttribute('content'));
     const items = document.querySelectorAll('.event_showings .listItem, ul.list li.listItem');
     const showings = Array.from(items).map(li => ({
         dateText: clean(li.querySelector('.showings_date')?.textContent),
@@ -692,7 +709,10 @@ async function scrapeEagleBank(browser) {
         // Multi-date events: open "More Info" and read every showing
         for (const c of rangeCards) {
             try {
-                await gotoDetailWithRetry(page, c.url);
+                if (!(await gotoDetailWithRetry(page, c.url))) {
+                    console.log('   ⚠️ Browser page was closed, stopping this venue.');
+                    break;
+                }
                 const d = await page.evaluate(extractEBAShowings);
                 const title = d.title || c.title;
                 const type = categorizeEBA(title);
@@ -1316,6 +1336,135 @@ async function scrapeBeasley(browser) {
 }
 
 // =========================================================================
+// BUTLER - HINKLE FIELDHOUSE (Ticketmaster venue page)
+// Same Ticketmaster layout as Reed Arena: click "More Events" until it's gone,
+// then read each "Find Tickets" link's hidden text:
+//   "Butler University Bulldogs Womens Basketball vs. North Dakota State Bison Womens Basketball, 11/12/26, 7:00 PM"
+// Reuses extractReedEvents() and parseReedLabel() (12:00 AM -> TBA).
+// Times on the page are already local (ET), so no time zone conversion.
+// =========================================================================
+
+const HINKLE_URL = 'https://www.ticketmaster.com/hinkle-fieldhouse-tickets-indianapolis/venue/41118';
+
+function categorizeHinkle(title) {
+    const t = (title || '').toLowerCase().replace(/[’']/g, '');
+
+    if (/womens? basketball|\bwbb\b/.test(t)) return 'NCAA WB';
+    if (/volleyball/.test(t)) return 'NCAA WVB';
+    if (/mens basketball|\bmbb\b/.test(t) || /\bbasketball\b/.test(t)) return 'NCAA MB';
+
+    const concertWords = [
+        'concert', 'tour', 'music', 'festival', 'live', 'band', 'symphony', 'orchestra', 'r&b',
+        'jazz', 'gospel', 'hip hop', 'rap', 'country', 'rock', 'singer', 'tribute'
+    ];
+    if (concertWords.some(w => new RegExp(`(^|[^a-z])${w.replace(/[&]/g, '\\$&')}([^a-z]|$)`).test(t))) return 'Concert';
+
+    return 'Other';
+}
+
+async function scrapeHinkle(browser) {
+    const context = await browser.newContext({
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+        viewport: { width: 1366, height: 900 }
+    });
+    const page = await context.newPage();
+    const venueData = [];
+    const seen = new Set();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    try {
+        console.log('\n🚀 Scraping Butler - Hinkle Fieldhouse (Ticketmaster)...');
+        await page.goto(HINKLE_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+
+        try {
+            const cookieBtn = page.locator('#onetrust-accept-btn-handler, button:has-text("Accept")').first();
+            if (await cookieBtn.isVisible({ timeout: 4000 })) await cookieBtn.click();
+        } catch (e) {}
+
+        const linkSelector = 'a[data-testid="event-list-link"]';
+        try {
+            await page.waitForSelector(linkSelector, { timeout: 30000 });
+        } catch (e) {
+            await page.screenshot({ path: 'hinkle_debug.png', fullPage: true }).catch(() => {});
+            console.log(`   ⚠️ No events appeared (page title: "${await page.title()}"). Saved hinkle_debug.png`);
+            throw e;
+        }
+
+        // ---- Click "More Events" until it disappears
+        const moreBtn = page.locator('button').filter({ hasText: /^\s*More Events\s*$/i }).first();
+        let failedClicks = 0;
+        for (let i = 0; i < 100; i++) {
+            let visible = await moreBtn.isVisible().catch(() => false);
+            for (let w = 0; !visible && w < 6; w++) {
+                await page.mouse.wheel(0, 3000);
+                await page.waitForTimeout(500);
+                visible = await moreBtn.isVisible().catch(() => false);
+            }
+            if (!visible) {
+                console.log('   ↪︎ Hinkle: "More Events" is gone, all events loaded.');
+                break;
+            }
+
+            const before = await page.locator(linkSelector).count();
+            await moreBtn.scrollIntoViewIfNeeded().catch(() => {});
+            await moreBtn.click({ timeout: 5000 }).catch(async () => {
+                await moreBtn.evaluate(el => el.click()).catch(() => {});
+            });
+
+            try {
+                await page.waitForFunction(
+                    ([sel, n]) => document.querySelectorAll(sel).length > n,
+                    [linkSelector, before],
+                    { timeout: 15000 }
+                );
+                failedClicks = 0;
+                console.log(`   ↪︎ Hinkle More Events: ${before} -> ${await page.locator(linkSelector).count()} events`);
+            } catch {
+                failedClicks++;
+                console.log(`   ↪︎ Hinkle More Events click added nothing (attempt ${failedClicks}/3)`);
+                if (failedClicks >= 3) break;
+            }
+            await page.waitForTimeout(800);
+        }
+
+        // ---- Read every event
+        const events = await page.evaluate(extractReedEvents);
+        console.log(`📋 Found ${events.length} Ticketmaster events for Hinkle Fieldhouse.`);
+
+        let skippedParking = 0;
+        for (const ev of events) {
+            const { title, date, time } = parseReedLabel(ev.label);
+            if (!title) continue;
+            if (/\bparking\b/i.test(title)) { skippedParking++; continue; }
+
+            if (date !== 'TBA') {
+                const [y, m, d] = date.split('-').map(Number);
+                if (new Date(y, m - 1, d) < today) continue;
+            }
+
+            const type = categorizeHinkle(title);
+            const key = `${date}|${time}|${title}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+
+            const timeET = time === 'TBA' ? 'TBA' : `${time} EST`;
+            venueData.push({ venue: 'Butler - Hinkle Fieldhouse', title, date, time: timeET, type });
+            console.log(`✅ Kept: ${title} on ${date} (${timeET}) [${type}]`);
+        }
+
+        console.log(`🏁 Hinkle Fieldhouse: ${venueData.length} rows${skippedParking ? ` (${skippedParking} parking listings skipped)` : ''}.`);
+    } catch (err) {
+        console.error('❌ Hinkle Fieldhouse failed:', err.message);
+    } finally {
+        await page.close();
+        await context.close();
+    }
+
+    return venueData;
+}
+
+// =========================================================================
 // MAIN EXECUTION
 // =========================================================================
 if (require.main === module) {
@@ -1329,12 +1478,11 @@ if (require.main === module) {
             scrapeReedArena(browser),
             scrapeThePit(browser),
             scrapeKochArena(browser),
-            scrapeBeasley(browser)
+            scrapeBeasley(browser),
+            scrapeHinkle(browser)
         ]);
 
-        const rawData = results.flat();
-        const allData = dedupeRows(rawData);
-        if (rawData.length !== allData.length) console.log(`\n🧹 Removed ${rawData.length - allData.length} duplicate rows`);
+        const allData = results.flat();
         console.log(`\n🏁 Total events scraped: ${allData.length}`);
 
         const csvWriter = createCsvWriter({
@@ -1359,4 +1507,4 @@ if (require.main === module) {
     })();
 }
 
-module.exports = { scrapeAngelOfTheWinds, scrapeFirstHorizon, scrapeEagleBank, scrapeReedArena, scrapeThePit, scrapeKochArena, scrapeBeasley };
+module.exports = { scrapeAngelOfTheWinds, scrapeFirstHorizon, scrapeEagleBank, scrapeReedArena, scrapeThePit, scrapeKochArena, scrapeBeasley, scrapeHinkle };
