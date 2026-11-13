@@ -42,7 +42,6 @@ Angel of the Winds,Everett Silvertips vs. Wenatchee Wild,2027-03-26,7:05PM,Other
 Angel of the Winds,Hot Wheels Stunt Show,2027-05-29,12:00PM,Other
 Angel of the Winds,Hot Wheels Stunt Show,2027-05-29,7:00PM,Other
 Angel of the Winds,Hot Wheels Stunt Show,2027-05-30,2:00PM,Other
-First Horizon Coliseum,Greensboro Gargoyles vs Worcester Railers,2026-11-12,7:00PM,ECHL
 First Horizon Coliseum,Banda MS (CANCELED),2026-11-13,8:00PM,Other
 First Horizon Coliseum,Greensboro Gargoyles vs Worcester Railers,2026-11-14,7:00PM,ECHL
 First Horizon Coliseum,Greensboro Gargoyles vs Worcester Railers,2026-11-15,3:00PM,ECHL
@@ -235,23 +234,34 @@ WSU - Beasley Coliseum,Boise State Broncos at Washington State Cougars Mens Bask
 WSU - Beasley Coliseum,Boise State Broncos at Washington State Cougars Womens Basketball,2027-02-28,11:00AM,NCAA WB
 WSU - Beasley Coliseum,Utah State Aggies at Washington State Cougars Womens Basketball,2027-03-03,6:00PM,NCAA WB
 WSU - Beasley Coliseum,Utah State Aggies at Washington State Cougars Mens Basketball,2027-03-06,4:45PM,NCAA MB
-Butler - Hinkle Fieldhouse,Butler University Bulldogs Womens Basketball vs. North Dakota State Bison Womens Basketball,2026-11-12,7:00PM EST,NCAA WB
-Butler - Hinkle Fieldhouse,Butler Bulldogs Men's Basketball vs. Pittsburgh Panthers Men's Basketball,2026-11-13,6:30PM EST,NCAA MB
-Butler - Hinkle Fieldhouse,Butler Bulldogs Men's Basketball vs. Western Carolina Catamounts Men's Basketball,2026-11-17,7:00PM EST,NCAA MB
-Butler - Hinkle Fieldhouse,Butler University Bulldogs Womens Basketball vs. Kent State Womens Basketball,2026-11-18,6:30PM EST,NCAA WB
-Butler - Hinkle Fieldhouse,Butler Bulldogs Men's Basketball vs. Northeastern Mens Basketball,2026-11-19,7:00PM EST,NCAA MB
-Butler - Hinkle Fieldhouse,Butler University Bulldogs Womens Basketball vs. Eastern Michigan Eagles Women's Basketball,2026-11-22,2:00PM EST,NCAA WB
-Butler - Hinkle Fieldhouse,Butler Bulldogs Men's Basketball vs. Bellarmine University Knights Mens Basketball,2026-11-27,3:00PM EST,NCAA MB
-Butler - Hinkle Fieldhouse,Butler Bulldogs Men's Basketball vs. Presbyterian Blue Hose Mens Basketball,2026-12-02,7:00PM EST,NCAA MB
-Butler - Hinkle Fieldhouse,Butler University Bulldogs Womens Basketball vs. Seton Hall Pirates Womens Basketball,2026-12-04,7:00PM EST,NCAA WB
-Butler - Hinkle Fieldhouse,Emirates NBA Cup,2026-12-11,7:30PM EST,Other
-Butler - Hinkle Fieldhouse,Butler University Bulldogs Womens Basketball vs. Indiana State Sycamores Womens Basketball,2026-12-13,2:00PM EST,NCAA WB
-Butler - Hinkle Fieldhouse,Butler Bulldogs Men's Basketball vs. USC Upstate Spartans Mens Basketball,2026-12-16,7:00PM EST,NCAA MB
-Butler - Hinkle Fieldhouse,Butler University Bulldogs Womens Basketball vs. Wright State Raiders Women's Basketball,2026-12-19,12:00PM EST,NCAA WB
-Butler - Hinkle Fieldhouse,Butler Bulldogs Men's Basketball vs. Marquette Golden Eagles Men's Basketball,2026-12-23,6:00PM EST,NCAA MB
-Butler - Hinkle Fieldhouse,Butler University Bulldogs Womens Basketball vs. St. John's Red Storm Women's Basketball,2026-12-30,6:00PM EST,NCAA WB
-Butler - Hinkle Fieldhouse,Butler Bulldogs Men's Basketball vs. UConn Huskies Men's Basketball,2026-12-31,7:00PM EST,NCAA MB
-Butler - Hinkle Fieldhouse,Butler Bulldogs Men's Basketball vs. St. John's Red Storm Men's Basketball,2027-01-03,5:00PM EST,NCAA MB
-Butler - Hinkle Fieldhouse,Butler University Bulldogs Womens Basketball vs. Providence Womens Basketball,2027-01-06,7:00PM EST,NCAA WB
-Butler - Hinkle Fieldhouse,Butler Bulldogs Men's Basketball vs. Villanova Wildcats Men's Basketball,2027-01-15,6:00PM EST,NCAA MB
-Butler - Hinkle Fieldhouse,Butler University Bulldogs Womens Basketball vs. Xavier Womens Basketball,2027-01-16,2:00PM EST,NCAA WB
+Butler - Hinkle Fieldhouse,Butler Men's Basketball vs. Pittsburgh,2026-11-13,6:30PM EST,NCAA MB
+Butler - Hinkle Fieldhouse,Butler Men's Basketball vs. Western Carolina,2026-11-17,7:00PM EST,NCAA MB
+Butler - Hinkle Fieldhouse,Butler Women's Basketball vs. Kent State,2026-11-18,6:30PM EST,NCAA WB
+Butler - Hinkle Fieldhouse,Butler Men's Basketball vs. Northeastern,2026-11-19,7:00PM EST,NCAA MB
+Butler - Hinkle Fieldhouse,Butler Women's Basketball vs. Eastern Michigan,2026-11-22,2:00PM EST,NCAA WB
+Butler - Hinkle Fieldhouse,Butler Men's Basketball vs. Bellarmine,2026-11-27,3:00PM EST,NCAA MB
+Butler - Hinkle Fieldhouse,Butler Men's Basketball vs. Presbyterian,2026-12-02,7:00PM EST,NCAA MB
+Butler - Hinkle Fieldhouse,Butler Women's Basketball vs. Seton Hall,2026-12-04,7:00PM EST,NCAA WB
+Butler - Hinkle Fieldhouse,Butler Women's Basketball vs. Indiana State,2026-12-13,2:00PM EST,NCAA WB
+Butler - Hinkle Fieldhouse,Butler Men's Basketball vs. USC Upstate,2026-12-16,7:00PM EST,NCAA MB
+Butler - Hinkle Fieldhouse,Butler Women's Basketball vs. Wright State,2026-12-19,12:00PM EST,NCAA WB
+Butler - Hinkle Fieldhouse,Butler Men's Basketball vs. Georgia Tech,2026-12-19,3:00PM EST,NCAA MB
+Butler - Hinkle Fieldhouse,Butler Men's Basketball vs. Marquette,2026-12-23,6:00PM EST,NCAA MB
+Butler - Hinkle Fieldhouse,Butler Women's Basketball vs. St. John's,2026-12-30,6:00PM EST,NCAA WB
+Butler - Hinkle Fieldhouse,Butler Men's Basketball vs. Connecticut,2026-12-31,7:00PM EST,NCAA MB
+Butler - Hinkle Fieldhouse,Butler Men's Basketball vs. St. John's,2027-01-03,5:00PM EST,NCAA MB
+Butler - Hinkle Fieldhouse,Butler Women's Basketball vs. Providence,2027-01-06,7:00PM EST,NCAA WB
+Butler - Hinkle Fieldhouse,Butler Men's Basketball vs. Villanova,2027-01-15,6:00PM EST,NCAA MB
+Butler - Hinkle Fieldhouse,Butler Women's Basketball vs. Xavier,2027-01-16,2:00PM EST,NCAA WB
+Butler - Hinkle Fieldhouse,Butler Men's Basketball vs. Georgetown,2027-01-18,6:30PM EST,NCAA MB
+Butler - Hinkle Fieldhouse,Butler Women's Basketball vs. Marquette,2027-01-20,7:00PM EST,NCAA WB
+Butler - Hinkle Fieldhouse,Butler Women's Basketball vs. Creighton,2027-01-24,1:00PM EST,NCAA WB
+Butler - Hinkle Fieldhouse,Butler Men's Basketball vs. Providence,2027-01-27,7:00PM EST,NCAA MB
+Butler - Hinkle Fieldhouse,Butler Women's Basketball vs. Connecticut,2027-02-04,7:00PM EST,NCAA WB
+Butler - Hinkle Fieldhouse,Butler Men's Basketball vs. Xavier,2027-02-06,3:30PM EST,NCAA MB
+Butler - Hinkle Fieldhouse,Butler Women's Basketball vs. Villanova,2027-02-13,2:00PM EST,NCAA WB
+Butler - Hinkle Fieldhouse,Butler Men's Basketball vs. Creighton,2027-02-17,8:30PM EST,NCAA MB
+Butler - Hinkle Fieldhouse,Butler Women's Basketball vs. DePaul,2027-02-21,2:00PM EST,NCAA WB
+Butler - Hinkle Fieldhouse,Butler Men's Basketball vs. DePaul,2027-02-23,8:00PM EST,NCAA MB
+Butler - Hinkle Fieldhouse,Butler Women's Basketball vs. Georgetown,2027-02-24,7:00PM EST,NCAA WB
+Butler - Hinkle Fieldhouse,Butler Men's Basketball vs. Seton Hall,2027-03-06,1:30PM EST,NCAA MB
