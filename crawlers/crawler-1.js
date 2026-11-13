@@ -107,7 +107,7 @@ function formatTime(timeStr) {
         return 'TBA';
     }
 
-    if (timeStr.toUpperCase().includes('NOON')) {
+    if (/\bNOON\b/.test(timeStr.toUpperCase())) {   // a whole word: "AFTERNOON (2:30-3:30 PM)" is not noon
         return '12:00PM';
     }
 
@@ -1283,6 +1283,26 @@ async function scrapeChartway(browser) {
     return venueData;
 }
 
+// Reads a kickoff time out of the text of a schedule card's time label. Returns "7:30PM", "TBA", or "" when the text is not a time.
+//   "6:30 PM CST" -> 6:30PM    "TBA" / "Time TBD" -> TBA    "Noon" -> 12:00PM
+//   "AFTERNOON (2:30-3:30 PM)" -> 2:30PM   (a TV window: the game starts at the beginning of it)
+function parseKickoff(text) {
+    const s = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!s) return '';
+    if (/\bTB[AD]\b/i.test(s)) return 'TBA';
+    const range = s.match(/(\d{1,2})(?::(\d{2}))?\s*([ap])?\.?m?\.?\s*(?:-|–|—|to)\s*(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?/i);
+    if (range) {
+        const sh = parseInt(range[1], 10), eh = parseInt(range[4], 10);
+        let ap = (range[3] || '').toUpperCase() || (range[6] || '').toUpperCase();
+        if (!range[3] && range[6].toUpperCase() === 'P' && sh === 11 && eh === 12) ap = 'A';   // "11:00-12:00 PM" starts in the morning
+        return `${sh}:${range[2] || '00'}${ap}M`;
+    }
+    const one = s.match(/(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\b/i);
+    if (one) return `${parseInt(one[1], 10)}:${one[2] || '00'}${one[3].toUpperCase()}M`;
+    if (/\bnoon\b/i.test(s)) return '12:00PM';
+    return '';
+}
+
 // Fallback for when a game card's own elements aren't recognised: reads the date, time and opponent out of the
 // card's plain text instead (the text looks like "Home / vs. / FootballKentucky / Memorial StadiumColumbia, Mo.").
 function parseFaurotCardText(raw) {
@@ -1300,7 +1320,7 @@ function parseFaurotCardText(raw) {
         if (m) opponent = m[1];
     }
     opponent = opponent.replace(/^football\s*/i, '').replace(/^(?:no\.\s*)?\d{1,2}\s+(?=[A-Za-z])/i, '').trim();
-    return { date: dm ? `${dm[1]} ${dm[2]}` : '', time: tm ? tm[1] : '', opponent };
+    return { date: dm ? `${dm[1]} ${dm[2]}` : '', time: tm ? (/^tb[ad]$/i.test(tm[1]) ? 'TBA' : tm[1]) : '', opponent };
 }
 
 async function scrapeFaurotField(browser) {
@@ -1376,9 +1396,21 @@ async function scrapeFaurotField(browser) {
                 let rawDate = (await dateLoc.count() > 0) ? await dateLoc.innerText() : "";
                 if (!rawDate.trim()) rawDate = fromText.date;
 
-                const timeLoc = card.locator('.schedule-event-item-result__label, .schedule-event-date__time').first();
-                let rawTime = (await timeLoc.count() > 0) ? await timeLoc.innerText() : "";
-                if (!rawTime.trim()) rawTime = fromText.time || "TBA";
+                // The kickoff time is in .schedule-event-item-result__label. If that label is there, it is the answer:
+                // "TBA" stays TBA (nothing else on the card is allowed to override it), and a window such as
+                // "AFTERNOON (2:30-3:30 PM)" gives its start. The rest of the card is only searched when there is no label at all.
+                let rawTime = "";
+                const labelLoc = card.locator('.schedule-event-item-result__label');
+                const labelText = (await labelLoc.count() > 0) ? (await labelLoc.first().innerText()).trim() : "";
+                if (labelText) {
+                    rawTime = parseKickoff(labelText) || "TBA";
+                } else {
+                    const dtLoc = card.locator('.schedule-event-date__time');
+                    const n = await dtLoc.count();
+                    for (let i = 0; i < n && !rawTime; i++) rawTime = parseKickoff((await dtLoc.nth(i).innerText()).trim());
+                    if (!rawTime) rawTime = parseKickoff(fromText.time) || "TBA";
+                }
+                console.log(`   ⏰ time label: "${labelText}" -> ${rawTime}`);
 
                 const cleanDate = formatDate(`${rawDate} ${yearForText(rawDate)}`);
                 const cleanTime = formatTime(rawTime);
@@ -1389,7 +1421,10 @@ async function scrapeFaurotField(browser) {
                     continue;
                 }
 
-                const finalTitle = `MISSOURI VS ${opponent.replace(/\s+/g, ' ').trim().toUpperCase()}`;
+                // Keep the site's own capitalisation ("Kentucky", "Texas A&M"); only repair an all-caps name.
+                let oppName = opponent.replace(/\s+/g, ' ').trim();
+                if (oppName === oppName.toUpperCase()) oppName = oppName.replace(/[A-Za-z']{4,}/g, (w) => w[0] + w.slice(1).toLowerCase());
+                const finalTitle = `Missouri vs ${oppName}`;
                 const key = `${finalTitle}|${cleanDate}|${cleanTime}`;
                 if (seen.has(key)) continue;   // the card selector can match a game's inner and outer element
                 seen.add(key);

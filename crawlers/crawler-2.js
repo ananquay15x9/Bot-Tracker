@@ -681,7 +681,7 @@ async function scrapeRSL(browser) {
         await page.waitForSelector('.mls-c-match-list__match, .mls-c-match-tile', { timeout: 15000 });
         await page.waitForTimeout(2000);
 
-        const rawMatches = await page.evaluate(() => {
+        const readMatches = () => page.evaluate(() => {
             const results = [];
             const cards = document.querySelectorAll('.mls-c-match-list__match-container, .mls-c-match-list__match');
 
@@ -726,6 +726,40 @@ async function scrapeRSL(browser) {
             return results;
         });
 
+        const rawMatches = await readMatches();
+
+        // The page opens on TODAY's date, which is out of season (the 2026 season is over; the 2027 fixtures sit under later
+        // dates), so reading only what is showing finds nothing. The date lives in the page's web address: step it forward
+        // and read what each date shows. If changing it has no effect on the page, give up early and say so.
+        const matchKey = (m) => `${m.urlDate}|${m.homeTeam}|${m.awayTeam}`;
+        const known = new Set(rawMatches.map(matchKey));
+        const baseKeys = [...known].sort().join(',');
+        const baseUrl = page.url();
+        const dateInUrl = /\d{4}-\d{2}-\d{2}/;
+        console.log(`🔎 The schedule page's address: ${baseUrl}`);
+        let ignored = 0;
+        for (let step = 1; step <= 18 && ignored < 3; step++) {      // every 15 days, about 9 months ahead
+            const iso = new Date(today.getTime() + step * 15 * 86400000).toISOString().slice(0, 10);
+            const next = dateInUrl.test(baseUrl)
+                ? baseUrl.replace(dateInUrl, iso)
+                : baseUrl + (baseUrl.includes('#') ? (/[#&]$/.test(baseUrl) ? '' : '&') : '#') + `date=${iso}`;
+            try {
+                await page.goto(next, { waitUntil: 'domcontentloaded', timeout: 30000 });
+                await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+                await page.waitForSelector('.mls-c-match-list__match, .mls-c-match-tile', { timeout: 8000 });
+                await page.waitForTimeout(1200);
+                const more = await readMatches();
+                const keys = more.map(matchKey).sort().join(',');
+                let added = 0;
+                for (const m of more) { const k = matchKey(m); if (!known.has(k)) { known.add(k); rawMatches.push(m); added++; } }
+                console.log(`   ${iso}: ${more.length} fixtures shown, ${added} new`);
+                ignored = (keys === baseKeys) ? ignored + 1 : 0;
+            } catch (e) {
+                console.log(`   ${iso}: nothing shown (${e.message.split('\n')[0].substring(0, 60)})`);
+            }
+        }
+        if (ignored >= 3) console.log('   ⚠️ changing the date in the address does not change what the page shows - stopped looking ahead');
+
         console.log(`📋 Found ${rawMatches.length} raw RSL fixtures. Normalizing...`);
         const seenEvents = new Set();
 
@@ -756,6 +790,7 @@ async function scrapeRSL(browser) {
             
             let awayFormatted = toTitleCase(match.awayTeam);
             if (awayFormatted.toLowerCase() === 'la galaxy') awayFormatted = 'LA Galaxy';
+            awayFormatted = awayFormatted.replace(/\b(Fc|Sc|Cf)\b/g, (m) => m.toUpperCase()).replace(/\bLafc\b/, 'LAFC');   // Austin FC, St. Louis City SC, Inter Miami CF, LAFC
 
             const eventTitle = `Salt Lake vs. ${awayFormatted}`;
             const dedupeKey = `${cleanDate}-${cleanTime}-${eventTitle}`;
@@ -1093,7 +1128,7 @@ function formatTimeBaylor(timeStr) {
         return 'TBA';
     }
 
-    if (timeStr.toUpperCase().includes('NOON')) {
+    if (/\bNOON\b/.test(timeStr.toUpperCase())) {   // a whole word: "AFTERNOON" is not noon
         return '12:00PM';
     }
 

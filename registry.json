@@ -284,6 +284,14 @@
    "scrapers": [
     "crawler-5:scrapeBeasley"
    ]
+  },
+  {
+  	"id": "hinkle-fieldhouse-butler",
+  	"name": "Hinkle Fieldhouse (Butler)", 
+  	"category": "NCAA",
+  	"scrapers": [
+  		"crawler-5:scrapeHinkle"
+  	]
   }
  ]
 }

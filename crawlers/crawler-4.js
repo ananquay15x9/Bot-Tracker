@@ -204,6 +204,12 @@ async function scrapeEnmarket(browser) {
 
         try { await page.getByRole('button', { name: 'Accept All' }).click({ timeout: 3000 }); } catch (e) {}
 
+        // Ticketmaster sometimes shows a "blocked / verify you are human" page instead of the events. Say so plainly.
+        const pageText = ((await page.locator('body').innerText({ timeout: 5000 }).catch(() => '')) || '').replace(/\s+/g, ' ').trim();
+        if (/access denied|unusual activity|are you a (?:human|robot)|captcha|pardon the interruption|verify you are (?:a )?human/i.test(pageText.slice(0, 4000))) {
+            throw new Error(`Ticketmaster blocked the crawler (the page says: "${pageText.slice(0, 100)}")`);
+        }
+
         console.log("⏳ Waiting for Enmarket event listings...");
         await page.waitForSelector('li[data-id], div[class*="sc-451c8dd0-2"]', { timeout: 15000 });
 
@@ -218,6 +224,10 @@ async function scrapeEnmarket(browser) {
 
         const eventItems = await page.locator('li[data-id], div[class*="sc-451c8dd0-2"]').all();
         console.log(`📋 Found ${eventItems.length} Enmarket items on the grid.`);
+        let titlesRead = 0;
+        for (const it of eventItems.slice(0, 3)) {
+            console.log(`   🔬 item text: ${(((await it.textContent().catch(() => '')) || '').replace(/\s+/g, ' ').trim()).substring(0, 200)}`);
+        }
 
         for (const item of eventItems) {
             try {
@@ -237,6 +247,7 @@ async function scrapeEnmarket(browser) {
                 }
 
                 if (!rawTitle || rawTitle.toLowerCase() === 'find tickets') continue;
+                titlesRead++;
 
                 let constructedDateStr = "";
                 const hiddenDateLoc = item.locator('span.VisuallyHidden-sc-8buqks-0 span').first();
@@ -285,6 +296,10 @@ async function scrapeEnmarket(browser) {
             }
         }
 
+ 
+        if (eventItems.length > 0 && titlesRead === 0) {
+            console.log(`❌ Enmarket Arena: ${eventItems.length} listings were found but none of their titles could be read - Ticketmaster's page layout has probably changed`);
+        }
     } catch (e) {
         console.log("❌ Enmarket Arena failed: ", e.message); 
     } finally {
