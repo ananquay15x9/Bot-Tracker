@@ -1,0 +1,289 @@
+{
+ "version": 1,
+ "note": "How scrapers group into venues, and each venue's category. Edit freely; a scraper found in a crawler file but not listed here still shows up (as its own venue, category Other).",
+ "venues": [
+  {
+   "id": "amerant-bank-arena",
+   "name": "Amerant Bank Arena",
+   "category": "NHL/NBA",
+   "scrapers": [
+    "crawler-1:scrapeAmerant"
+   ]
+  },
+  {
+   "id": "canada-life-centre",
+   "name": "Canada Life Centre",
+   "category": "NHL/NBA",
+   "scrapers": [
+    "crawler-1:scrapeCanadaLifeCentre"
+   ]
+  },
+  {
+   "id": "capital-one-arena",
+   "name": "Capital One Arena",
+   "category": "NHL/NBA",
+   "scrapers": [
+    "crawler-1:scrapeCapitalOne"
+   ]
+  },
+  {
+   "id": "chartway-arena-old-dominion",
+   "name": "Chartway Arena (Old Dominion)",
+   "category": "NCAA",
+   "scrapers": [
+    "crawler-1:scrapeChartway"
+   ]
+  },
+  {
+   "id": "dean-smith-center-unc",
+   "name": "Dean Smith Center (UNC)",
+   "category": "NCAA",
+   "scrapers": [
+    "crawler-1:scrapeGoHeels"
+   ]
+  },
+  {
+   "id": "enterprise-center",
+   "name": "Enterprise Center",
+   "category": "NHL/NBA",
+   "scrapers": [
+    "crawler-1:scrapeEnterprise"
+   ]
+  },
+  {
+   "id": "finneran-pavilion-villanova",
+   "name": "Finneran Pavilion (Villanova)",
+   "category": "NCAA",
+   "scrapers": [
+    "crawler-1:scrapeVillanova"
+   ]
+  },
+  {
+   "id": "grand-casino-arena",
+   "name": "Grand Casino Arena",
+   "category": "NHL/NBA",
+   "scrapers": [
+    "crawler-1:scrapeGrandCasino"
+   ]
+  },
+  {
+   "id": "kfc-yum-center-louisville",
+   "name": "KFC Yum! Center (Louisville)",
+   "category": "NCAA",
+   "scrapers": [
+    "crawler-1:scrapeKFC"
+   ]
+  },
+  {
+   "id": "faurot-field-mizzou",
+   "name": "Faurot Field (Mizzou)",
+   "category": "NCAA",
+   "scrapers": [
+    "crawler-1:scrapeFaurotField"
+   ]
+  },
+  {
+   "id": "scottsmiracle-gro-field",
+   "name": "ScottsMiracle-Gro Field",
+   "category": "MLS",
+   "scrapers": [
+    "crawler-1:scrapeSMG"
+   ]
+  },
+  {
+   "id": "tql-stadium",
+   "name": "TQL Stadium",
+   "category": "MLS",
+   "scrapers": [
+    "crawler-1:scrapeTQL"
+   ]
+  },
+  {
+   "id": "bryce-jordan-center-penn-state",
+   "name": "Bryce Jordan Center (Penn State)",
+   "category": "NCAA",
+   "scrapers": [
+    "crawler-2:scrapeBJC"
+   ]
+  },
+  {
+   "id": "john-paul-jones-arena-virginia",
+   "name": "John Paul Jones Arena (Virginia)",
+   "category": "NCAA",
+   "scrapers": [
+    "crawler-2:scrapeJPJ"
+   ]
+  },
+  {
+   "id": "neville-arena-auburn",
+   "name": "Neville Arena (Auburn)",
+   "category": "NCAA",
+   "scrapers": [
+    "crawler-2:scrapeNAGym",
+    "crawler-2:scrapeNAMB",
+    "crawler-2:scrapeNAWB",
+    "crawler-2:scrapeNAWVB"
+   ]
+  },
+  {
+   "id": "america-first-field-real-salt-lake",
+   "name": "America First Field (Real Salt Lake)",
+   "category": "MLS",
+   "scrapers": [
+    "crawler-2:scrapeRSL",
+    "crawler-2:scrapeRSLW"
+   ]
+  },
+  {
+   "id": "cassell-coliseum-virginia-tech",
+   "name": "Cassell Coliseum (Virginia Tech)",
+   "category": "NCAA",
+   "scrapers": [
+    "crawler-2:scrapeVT"
+   ]
+  },
+  {
+   "id": "dick-s-sporting-goods-park",
+   "name": "Dick's Sporting Goods Park",
+   "category": "MLS",
+   "scrapers": [
+    "crawler-3:scrapeDSG"
+   ]
+  },
+  {
+   "id": "foster-pavilion-baylor",
+   "name": "Foster Pavilion (Baylor)",
+   "category": "NCAA",
+   "scrapers": [
+    "crawler-2:scrapeBaylor",
+    "crawler-3:scrapeBaylor"
+   ]
+  },
+  {
+   "id": "xfinity-center-maryland",
+   "name": "Xfinity Center (Maryland)",
+   "category": "NCAA",
+   "scrapers": [
+    "crawler-3:scrapeXfinityE",
+    "crawler-4:scrapeXfinityS"
+   ]
+  },
+  {
+   "id": "mizzou-arena",
+   "name": "Mizzou Arena",
+   "category": "NCAA",
+   "scrapers": [
+    "crawler-3:scrapeMizzouMB",
+    "crawler-3:scrapeMizzouWB",
+    "crawler-3:scrapeMizzouE"
+   ]
+  },
+  {
+   "id": "providence-park",
+   "name": "Providence Park",
+   "category": "MLS",
+   "scrapers": [
+    "crawler-3:scrapeProvidenceT",
+    "crawler-3:scrapeProvidenceThorns"
+   ]
+  },
+  {
+   "id": "shell-energy-stadium",
+   "name": "Shell Energy Stadium",
+   "category": "MLS",
+   "scrapers": [
+    "crawler-3:scrapeShellDynamo",
+    "crawler-3:scrapeShellDash"
+   ]
+  },
+  {
+   "id": "subaru-park",
+   "name": "Subaru Park",
+   "category": "MLS",
+   "scrapers": [
+    "crawler-3:scrapeSubaruUnion",
+    "crawler-3:scrapeSubaruPPL"
+   ]
+  },
+  {
+   "id": "allianz-field",
+   "name": "Allianz Field",
+   "category": "MLS",
+   "scrapers": [
+    "crawler-4:scrapeAllianzField"
+   ]
+  },
+  {
+   "id": "enmarket-arena",
+   "name": "Enmarket Arena",
+   "category": "Other",
+   "scrapers": [
+    "crawler-4:scrapeEnmarket"
+   ]
+  },
+  {
+   "id": "pmac-lsu",
+   "name": "PMAC (LSU)",
+   "category": "NCAA",
+   "scrapers": [
+    "crawler-4:scrapeLSU"
+   ]
+  },
+  {
+   "id": "angel-of-the-winds-arena",
+   "name": "Angel of the Winds Arena",
+   "category": "Other",
+   "scrapers": [
+    "crawler-5:scrapeAngelOfTheWinds"
+   ]
+  },
+  {
+   "id": "first-horizon-coliseum",
+   "name": "First Horizon Coliseum",
+   "category": "NCAA",
+   "scrapers": [
+    "crawler-5:scrapeFirstHorizon"
+   ]
+  },
+  {
+   "id": "eaglebank-arena-gmu",
+   "name": "EagleBank Arena (GMU)",
+   "category": "NCAA",
+   "scrapers": [
+    "crawler-5:scrapeEagleBank"
+   ]
+  },
+  {
+   "id": "reed-arena-texas-a-m",
+   "name": "Reed Arena (Texas A&M)",
+   "category": "NCAA",
+   "scrapers": [
+    "crawler-5:scrapeReedArena"
+   ]
+  },
+  {
+   "id": "the-pit-unm",
+   "name": "The Pit (UNM)",
+   "category": "NCAA",
+   "scrapers": [
+    "crawler-5:scrapeThePit"
+   ]
+  },
+  {
+   "id": "koch-arena-wichita-state",
+   "name": "Koch Arena (Wichita State)",
+   "category": "NCAA",
+   "scrapers": [
+    "crawler-5:scrapeKochArena"
+   ]
+  },
+  {
+   "id": "beasley-coliseum-wsu",
+   "name": "Beasley Coliseum (WSU)",
+   "category": "NCAA",
+   "scrapers": [
+    "crawler-5:scrapeBeasley"
+   ]
+  }
+ ]
+}

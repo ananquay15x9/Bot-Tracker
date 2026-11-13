@@ -1,19 +1,14 @@
 {
-  "name": "calendar-bot-tracker",
+  "name": "isite-crawler-worker",
   "version": "1.0.0",
-  "description": "Sports event scraper for calendar updates",
-  "main": "crawler-1.js",
-  "scripts": {
-    "start": "node crawler-1.js && node crawler-2.js && node crawler-3.js",
-    "c1": "xvfb-run --auto-servernum --server-args='-screen 0 1280x720x24' node crawler-1.js",
-    "c2": "xvfb-run --auto-servernum --server-args='-screen 0 1280x720x24' node crawler-2.js",
-    "c3": "xvfb-run --auto-servernum --server-args='-screen 0 1280x720x24' node crawler-3.js",
-    "all": "npm run c1; npm run c2; npm run c3"
-  },
+  "private": true,
+  "description": "Runs the venue event-calendar crawlers on request from the iSite hub and returns what they find.",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=22" },
   "dependencies": {
     "csv-writer": "^1.6.0",
-    "playwright": "^1.58.2",
-    "playwright-extra": "^4.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2"
+    "express": "^5.2.1",
+    "playwright": "^1.63.0"
   }
 }
