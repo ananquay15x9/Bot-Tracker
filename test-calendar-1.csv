@@ -142,7 +142,6 @@ EagleBank Arena,Disney On Ice,2027-05-01,2:30PM,Concert
 EagleBank Arena,Disney On Ice,2027-05-01,6:30PM,Concert
 EagleBank Arena,Disney On Ice,2027-05-02,10:30AM,Concert
 EagleBank Arena,Disney On Ice,2027-05-02,2:30PM,Concert
-Texas A&M - Reed Arena,Texas A&M Aggies Mens Basketball vs. Oklahoma State Cowboys Mens Basketball,2026-11-12,7:00PM,NCAA MB
 Texas A&M - Reed Arena,Texas A&M Aggies Womens Volleyball vs. LSU Tigers Womens Volleyball,2026-11-13,6:30PM,NCAA WVB
 Texas A&M - Reed Arena,Texas A&M Aggies Womens Volleyball vs. Ole Miss Rebels Womens Volleyball,2026-11-15,12:00PM,NCAA WVB
 Texas A&M - Reed Arena,Texas A&M Aggies Womens Basketball vs. Lamar University Cardinals Womens Basketball,2026-11-16,4:00PM,NCAA WB
@@ -189,8 +188,6 @@ UNM - The Pit,New Mexico Lobos Mens Basketball vs. Air Force Academy Falcons Men
 UNM - The Pit,New Mexico Lobos Mens Basketball vs. UNLV Rebels Mens Basketball,2027-02-13,4:00PM,NCAA MB
 UNM - The Pit,New Mexico Lobos Mens Basketball vs. UTEP Miners Mens Basketball,2027-02-20,8:30PM,NCAA MB
 UNM - The Pit,New Mexico Lobos Mens Basketball vs. Hawaii Rainbow Warriors Mens Basketball,2027-02-24,6:00PM,NCAA MB
-UNM - The Pit,New Mexico Lobos Mens Basketball vs. Wyoming Cowboys Mens Basketball,2027-03-02,8:00PM,NCAA MB
-Wichita - Koch Arena,Men's Basketball vs. Friends,2026-11-11,6:30PM,NCAA MB
 Wichita - Koch Arena,Volleyball vs. Temple,2026-11-13,6:00PM,Other
 Wichita - Koch Arena,Women's Basketball vs. UC Riverside,2026-11-14,2:00PM,NCAA WB
 Wichita - Koch Arena,Men's Basketball vs. Austin Peay,2026-11-14,6:00PM,NCAA MB
@@ -210,6 +207,7 @@ Wichita - Koch Arena,Women's Basketball vs. East Carolina,2027-01-06,6:00PM,NCAA
 Wichita - Koch Arena,Men's Basketball vs. UAB,2027-01-08,8:00PM,NCAA MB
 Wichita - Koch Arena,Women's Basketball vs. Charlotte,2027-01-17,TBA,NCAA WB
 Wichita - Koch Arena,Men's Basketball vs. East Carolina,2027-01-17,4:00PM,NCAA MB
+Wichita - Koch Arena,Women's Basketball vs. Temple,2027-01-23,2:00PM,NCAA WB
 WSU - Beasley Coliseum,Southern Utah Thunderbirds at Washington State Cougars Womens Basketball,2026-11-13,6:00PM,NCAA WB
 WSU - Beasley Coliseum,Northwest Eagles at Washington State Cougars Mens Basketball,2026-11-14,TBA,NCAA MB
 WSU - Beasley Coliseum,Washington Huskies at Washington State Cougars Womens Basketball,2026-11-17,7:30PM,NCAA WB
@@ -224,6 +222,7 @@ WSU - Beasley Coliseum,Cal State Los Angeles Golden Eagles at Washington State C
 WSU - Beasley Coliseum,Gonzaga Bulldogs at Washington State Cougars Mens Basketball,2027-01-06,6:00PM,NCAA MB
 WSU - Beasley Coliseum,Texas State San Marcos Bobcats at Washington State Cougars Womens Basketball,2027-01-09,12:00PM,NCAA WB
 WSU - Beasley Coliseum,San Diego State Aztecs at Washington State Cougars Mens Basketball,2027-01-17,1:00PM,NCAA MB
+WSU - Beasley Coliseum,Colorado State Rams at Washington State Cougars Womens Basketball,2027-01-20,6:00PM,NCAA WB
 WSU - Beasley Coliseum,Oregon State Beavers at Washington State Cougars Mens Basketball,2027-01-27,7:00PM,NCAA MB
 WSU - Beasley Coliseum,Fresno State Bulldogs at Washington State Cougars Womens Basketball,2027-01-28,6:00PM,NCAA WB
 WSU - Beasley Coliseum,Fresno State Bulldogs at Washington State Cougars Mens Basketball,2027-01-30,5:30PM,NCAA MB
@@ -233,4 +232,26 @@ WSU - Beasley Coliseum,Oregon State Beavers at Washington State Cougars Womens B
 WSU - Beasley Coliseum,Colorado State Rams at Washington State Cougars Mens Basketball,2027-02-13,4:45PM,NCAA MB
 WSU - Beasley Coliseum,Gonzaga Bulldogs at Washington State Cougars Womens Basketball,2027-02-17,7:00PM,NCAA WB
 WSU - Beasley Coliseum,Boise State Broncos at Washington State Cougars Mens Basketball,2027-02-25,TBA,NCAA MB
+WSU - Beasley Coliseum,Boise State Broncos at Washington State Cougars Womens Basketball,2027-02-28,11:00AM,NCAA WB
+WSU - Beasley Coliseum,Utah State Aggies at Washington State Cougars Womens Basketball,2027-03-03,6:00PM,NCAA WB
 WSU - Beasley Coliseum,Utah State Aggies at Washington State Cougars Mens Basketball,2027-03-06,4:45PM,NCAA MB
+Butler - Hinkle Fieldhouse,Butler University Bulldogs Womens Basketball vs. North Dakota State Bison Womens Basketball,2026-11-12,7:00PM EST,NCAA WB
+Butler - Hinkle Fieldhouse,Butler Bulldogs Men's Basketball vs. Pittsburgh Panthers Men's Basketball,2026-11-13,6:30PM EST,NCAA MB
+Butler - Hinkle Fieldhouse,Butler Bulldogs Men's Basketball vs. Western Carolina Catamounts Men's Basketball,2026-11-17,7:00PM EST,NCAA MB
+Butler - Hinkle Fieldhouse,Butler University Bulldogs Womens Basketball vs. Kent State Womens Basketball,2026-11-18,6:30PM EST,NCAA WB
+Butler - Hinkle Fieldhouse,Butler Bulldogs Men's Basketball vs. Northeastern Mens Basketball,2026-11-19,7:00PM EST,NCAA MB
+Butler - Hinkle Fieldhouse,Butler University Bulldogs Womens Basketball vs. Eastern Michigan Eagles Women's Basketball,2026-11-22,2:00PM EST,NCAA WB
+Butler - Hinkle Fieldhouse,Butler Bulldogs Men's Basketball vs. Bellarmine University Knights Mens Basketball,2026-11-27,3:00PM EST,NCAA MB
+Butler - Hinkle Fieldhouse,Butler Bulldogs Men's Basketball vs. Presbyterian Blue Hose Mens Basketball,2026-12-02,7:00PM EST,NCAA MB
+Butler - Hinkle Fieldhouse,Butler University Bulldogs Womens Basketball vs. Seton Hall Pirates Womens Basketball,2026-12-04,7:00PM EST,NCAA WB
+Butler - Hinkle Fieldhouse,Emirates NBA Cup,2026-12-11,7:30PM EST,Other
+Butler - Hinkle Fieldhouse,Butler University Bulldogs Womens Basketball vs. Indiana State Sycamores Womens Basketball,2026-12-13,2:00PM EST,NCAA WB
+Butler - Hinkle Fieldhouse,Butler Bulldogs Men's Basketball vs. USC Upstate Spartans Mens Basketball,2026-12-16,7:00PM EST,NCAA MB
+Butler - Hinkle Fieldhouse,Butler University Bulldogs Womens Basketball vs. Wright State Raiders Women's Basketball,2026-12-19,12:00PM EST,NCAA WB
+Butler - Hinkle Fieldhouse,Butler Bulldogs Men's Basketball vs. Marquette Golden Eagles Men's Basketball,2026-12-23,6:00PM EST,NCAA MB
+Butler - Hinkle Fieldhouse,Butler University Bulldogs Womens Basketball vs. St. John's Red Storm Women's Basketball,2026-12-30,6:00PM EST,NCAA WB
+Butler - Hinkle Fieldhouse,Butler Bulldogs Men's Basketball vs. UConn Huskies Men's Basketball,2026-12-31,7:00PM EST,NCAA MB
+Butler - Hinkle Fieldhouse,Butler Bulldogs Men's Basketball vs. St. John's Red Storm Men's Basketball,2027-01-03,5:00PM EST,NCAA MB
+Butler - Hinkle Fieldhouse,Butler University Bulldogs Womens Basketball vs. Providence Womens Basketball,2027-01-06,7:00PM EST,NCAA WB
+Butler - Hinkle Fieldhouse,Butler Bulldogs Men's Basketball vs. Villanova Wildcats Men's Basketball,2027-01-15,6:00PM EST,NCAA MB
+Butler - Hinkle Fieldhouse,Butler University Bulldogs Womens Basketball vs. Xavier Womens Basketball,2027-01-16,2:00PM EST,NCAA WB

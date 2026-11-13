@@ -1336,6 +1336,135 @@ async function scrapeBeasley(browser) {
 }
 
 // =========================================================================
+// BUTLER - HINKLE FIELDHOUSE (Ticketmaster venue page)
+// Same Ticketmaster layout as Reed Arena: click "More Events" until it's gone,
+// then read each "Find Tickets" link's hidden text:
+//   "Butler University Bulldogs Womens Basketball vs. North Dakota State Bison Womens Basketball, 11/12/26, 7:00 PM"
+// Reuses extractReedEvents() and parseReedLabel() (12:00 AM -> TBA).
+// Times on the page are already local (ET), so no time zone conversion.
+// =========================================================================
+
+const HINKLE_URL = 'https://www.ticketmaster.com/hinkle-fieldhouse-tickets-indianapolis/venue/41118';
+
+function categorizeHinkle(title) {
+    const t = (title || '').toLowerCase().replace(/[’']/g, '');
+
+    if (/womens? basketball|\bwbb\b/.test(t)) return 'NCAA WB';
+    if (/volleyball/.test(t)) return 'NCAA WVB';
+    if (/mens basketball|\bmbb\b/.test(t) || /\bbasketball\b/.test(t)) return 'NCAA MB';
+
+    const concertWords = [
+        'concert', 'tour', 'music', 'festival', 'live', 'band', 'symphony', 'orchestra', 'r&b',
+        'jazz', 'gospel', 'hip hop', 'rap', 'country', 'rock', 'singer', 'tribute'
+    ];
+    if (concertWords.some(w => new RegExp(`(^|[^a-z])${w.replace(/[&]/g, '\\$&')}([^a-z]|$)`).test(t))) return 'Concert';
+
+    return 'Other';
+}
+
+async function scrapeHinkle(browser) {
+    const context = await browser.newContext({
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+        viewport: { width: 1366, height: 900 }
+    });
+    const page = await context.newPage();
+    const venueData = [];
+    const seen = new Set();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    try {
+        console.log('\n🚀 Scraping Butler - Hinkle Fieldhouse (Ticketmaster)...');
+        await page.goto(HINKLE_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+
+        try {
+            const cookieBtn = page.locator('#onetrust-accept-btn-handler, button:has-text("Accept")').first();
+            if (await cookieBtn.isVisible({ timeout: 4000 })) await cookieBtn.click();
+        } catch (e) {}
+
+        const linkSelector = 'a[data-testid="event-list-link"]';
+        try {
+            await page.waitForSelector(linkSelector, { timeout: 30000 });
+        } catch (e) {
+            await page.screenshot({ path: 'hinkle_debug.png', fullPage: true }).catch(() => {});
+            console.log(`   ⚠️ No events appeared (page title: "${await page.title()}"). Saved hinkle_debug.png`);
+            throw e;
+        }
+
+        // ---- Click "More Events" until it disappears
+        const moreBtn = page.locator('button').filter({ hasText: /^\s*More Events\s*$/i }).first();
+        let failedClicks = 0;
+        for (let i = 0; i < 100; i++) {
+            let visible = await moreBtn.isVisible().catch(() => false);
+            for (let w = 0; !visible && w < 6; w++) {
+                await page.mouse.wheel(0, 3000);
+                await page.waitForTimeout(500);
+                visible = await moreBtn.isVisible().catch(() => false);
+            }
+            if (!visible) {
+                console.log('   ↪︎ Hinkle: "More Events" is gone, all events loaded.');
+                break;
+            }
+
+            const before = await page.locator(linkSelector).count();
+            await moreBtn.scrollIntoViewIfNeeded().catch(() => {});
+            await moreBtn.click({ timeout: 5000 }).catch(async () => {
+                await moreBtn.evaluate(el => el.click()).catch(() => {});
+            });
+
+            try {
+                await page.waitForFunction(
+                    ([sel, n]) => document.querySelectorAll(sel).length > n,
+                    [linkSelector, before],
+                    { timeout: 15000 }
+                );
+                failedClicks = 0;
+                console.log(`   ↪︎ Hinkle More Events: ${before} -> ${await page.locator(linkSelector).count()} events`);
+            } catch {
+                failedClicks++;
+                console.log(`   ↪︎ Hinkle More Events click added nothing (attempt ${failedClicks}/3)`);
+                if (failedClicks >= 3) break;
+            }
+            await page.waitForTimeout(800);
+        }
+
+        // ---- Read every event
+        const events = await page.evaluate(extractReedEvents);
+        console.log(`📋 Found ${events.length} Ticketmaster events for Hinkle Fieldhouse.`);
+
+        let skippedParking = 0;
+        for (const ev of events) {
+            const { title, date, time } = parseReedLabel(ev.label);
+            if (!title) continue;
+            if (/\bparking\b/i.test(title)) { skippedParking++; continue; }
+
+            if (date !== 'TBA') {
+                const [y, m, d] = date.split('-').map(Number);
+                if (new Date(y, m - 1, d) < today) continue;
+            }
+
+            const type = categorizeHinkle(title);
+            const key = `${date}|${time}|${title}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+
+            const timeET = time === 'TBA' ? 'TBA' : `${time} EST`;
+            venueData.push({ venue: 'Butler - Hinkle Fieldhouse', title, date, time: timeET, type });
+            console.log(`✅ Kept: ${title} on ${date} (${timeET}) [${type}]`);
+        }
+
+        console.log(`🏁 Hinkle Fieldhouse: ${venueData.length} rows${skippedParking ? ` (${skippedParking} parking listings skipped)` : ''}.`);
+    } catch (err) {
+        console.error('❌ Hinkle Fieldhouse failed:', err.message);
+    } finally {
+        await page.close();
+        await context.close();
+    }
+
+    return venueData;
+}
+
+// =========================================================================
 // MAIN EXECUTION
 // =========================================================================
 if (require.main === module) {
@@ -1349,7 +1478,8 @@ if (require.main === module) {
             scrapeReedArena(browser),
             scrapeThePit(browser),
             scrapeKochArena(browser),
-            scrapeBeasley(browser)
+            scrapeBeasley(browser),
+            scrapeHinkle(browser)
         ]);
 
         const allData = results.flat();
@@ -1377,4 +1507,4 @@ if (require.main === module) {
     })();
 }
 
-module.exports = { scrapeAngelOfTheWinds, scrapeFirstHorizon, scrapeEagleBank, scrapeReedArena, scrapeThePit, scrapeKochArena, scrapeBeasley };
+module.exports = { scrapeAngelOfTheWinds, scrapeFirstHorizon, scrapeEagleBank, scrapeReedArena, scrapeThePit, scrapeKochArena, scrapeBeasley, scrapeHinkle };

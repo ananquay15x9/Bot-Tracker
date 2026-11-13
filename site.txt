@@ -42,3 +42,4 @@ crawler-5.js -> calendar-5.csv
 33. UNM - The Pit
 34. Wichita - Koch Arena
 35. WSU - Beasley Coliseum
+36. Butler - Hinkle Fieldhouse
