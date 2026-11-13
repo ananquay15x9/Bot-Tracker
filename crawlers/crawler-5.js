@@ -1362,6 +1362,7 @@ function categorizeHinkle(title) {
     return 'Other';
 }
 
+/*
 async function scrapeHinkle(browser) {
     const context = await browser.newContext({
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
@@ -1464,6 +1465,190 @@ async function scrapeHinkle(browser) {
     return venueData;
 }
 
+
+*/
+
+// =========================================================================
+// BUTLER - HINKLE FIELDHOUSE (butlersports.com SIDEARM calendar grid)
+// Trial source to compare with the Ticketmaster version (scrapeHinkle).
+// Rows are labelled 'Butler - Hinkle Fieldhouse (butlersports)' so the two
+// sources can be told apart in the CSV.
+//
+// The calendar is built with Knockout, so each event <li> carries its data
+// (date, time, sport, opponent, home/away). The scraper reads that data via
+// ko.dataFor(); if it isn't available it falls back to reading the cell text.
+// Kept: HOME games for the sports played at Hinkle (MBB, WBB, volleyball).
+// Clicks "Next Month" to move through the season.
+// Times are already local (ET); " EST" is added to match the Ticketmaster version.
+// =========================================================================
+
+const HINKLE_SIDEARM_URL = 'https://butlersports.com/calendar';
+const HINKLE_SIDEARM_MONTHS = 8;   // Nov -> Jun covers basketball + volleyball
+
+// Runs in the butlersports.com page: one entry per event in the grid
+function extractHinkleSidearmEvents() {
+    const clean = s => (s || '').toString().replace(/\s+/g, ' ').trim();
+    const monthNames = ['january','february','march','april','may','june','july','august','september','october','november','december'];
+
+    // Month/year shown at the top of the calendar (fallback for the DOM path)
+    const bodyText = clean(document.querySelector('[class*="sidearm-calendar"]')?.textContent || document.body.textContent);
+    const hm = bodyText.match(/(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})/i);
+    const viewMonth = hm ? monthNames.indexOf(hm[1].toLowerCase()) : -1;
+    const viewYear = hm ? parseInt(hm[2], 10) : NaN;
+
+    const ko = window.ko;
+    return Array.from(document.querySelectorAll('li.sidearm-calendar-table-cell-event')).map(li => {
+        // ---- Preferred: the Knockout data behind the row
+        let data = null;
+        try { data = ko && ko.dataFor ? ko.dataFor(li) : null; } catch (e) {}
+        if (data && data.date) {
+            const unwrap = v => (ko && ko.unwrap ? ko.unwrap(v) : v);
+            const sport = unwrap(data.sport) || {};
+            const opp = unwrap(data.opponent) || {};
+            const result = unwrap(data.result);
+            return {
+                source: 'ko',
+                isoDate: clean(unwrap(data.date)).slice(0, 10),
+                time: clean(unwrap(data.time)),
+                sportShort: clean(sport.short_display || sport.abbrev || ''),
+                sportTitle: clean(sport.title || ''),
+                atVs: clean(unwrap(data.at_vs)),
+                opponent: clean(`${opp.prefix || ''} ${opp.title || ''}`),
+                location: clean(unwrap(data.location)),
+                home: unwrap(data.location_indicator) === 'H' || li.classList.contains('sidearm-calendar-table-cell-event-home'),
+                hasResult: !!(result && result.status),
+                status: clean(unwrap(data.status))
+            };
+        }
+
+        // ---- Fallback: read the text in the cell
+        const spans = Array.from(li.querySelectorAll('p:first-of-type span')).map(s => clean(s.textContent));
+        const ps = Array.from(li.querySelectorAll(':scope > p')).map(p => clean(p.textContent));
+        const cell = li.closest('td') || li.parentElement?.closest('[class*="cell"]');
+        const dayNum = parseInt(clean(cell?.querySelector('time')?.textContent), 10);
+        let isoDate = '';
+        if (dayNum && viewMonth >= 0) {
+            isoDate = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
+        }
+        const resultText = ps[2] || '';
+        return {
+            source: 'dom',
+            isoDate,
+            time: (resultText.match(/\d{1,2}(?::\d{2})?\s*[AP]\.?M\.?|TBA|TBD/i) || [''])[0],
+            sportShort: spans[0] || '',
+            sportTitle: '',
+            atVs: spans[1] || '',
+            opponent: clean(spans.slice(2).join(' ')),
+            location: ps[1] || '',
+            home: li.classList.contains('sidearm-calendar-table-cell-event-home'),
+            hasResult: /\b[WLT]\s+\d+-\d+/.test(resultText),
+            status: '',
+            outsideMonth: !!(cell && /other|disabled|inactive|prev|next/i.test(cell.className))
+        };
+    });
+}
+
+function hinkleSportInfo(sportShort, sportTitle) {
+    const s = `${sportShort} ${sportTitle}`.toLowerCase().replace(/[’']/g, '');
+    if (/\bwbb\b|womens basketball/.test(s)) return { type: 'NCAA WB', name: "Women's Basketball" };
+    if (/\bmbb\b|mens basketball/.test(s)) return { type: 'NCAA MB', name: "Men's Basketball" };
+    if (/\b(wvb|vb|wvball)\b|volleyball/.test(s)) return { type: 'NCAA WVB', name: 'Volleyball' };
+    return null;   // other sports aren't played at Hinkle
+}
+
+async function scrapeHinkle(browser) {
+    const context = await browser.newContext({
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+        viewport: { width: 1366, height: 900 }
+    });
+    const page = await context.newPage();
+    const venueData = [];
+    const seen = new Set();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    try {
+        console.log('\n🚀 Scraping Butler - Hinkle Fieldhouse (butlersports.com calendar)...');
+        await page.goto(HINKLE_SIDEARM_URL, { waitUntil: 'domcontentloaded', timeout: 45000 });
+
+        try {
+            const cookieBtn = page.locator('#onetrust-accept-btn-handler, button:has-text("Accept")').first();
+            if (await cookieBtn.isVisible({ timeout: 4000 })) await cookieBtn.click();
+        } catch (e) {}
+
+        const eventSel = 'li.sidearm-calendar-table-cell-event';
+        try {
+            await page.waitForSelector(eventSel, { state: 'attached', timeout: 30000 });
+        } catch (e) {
+            await page.screenshot({ path: 'hinkle_sidearm_debug.png', fullPage: true }).catch(() => {});
+            console.log(`   ⚠️ No calendar events appeared (page title: "${await page.title()}"). Saved hinkle_sidearm_debug.png`);
+            throw e;
+        }
+
+        let otherSport = 0, away = 0, past = 0;
+
+        for (let m = 0; m < HINKLE_SIDEARM_MONTHS; m++) {
+            await page.waitForTimeout(1200);
+            const events = await page.evaluate(extractHinkleSidearmEvents);
+            const via = events.length ? events[0].source : '-';
+            console.log(`📅 Hinkle (butlersports) month ${m + 1}: ${events.length} events in the grid (read via ${via})`);
+
+            for (const ev of events) {
+                if (ev.outsideMonth) continue;
+
+                const sport = hinkleSportInfo(ev.sportShort, ev.sportTitle);
+                if (!sport) { otherSport++; continue; }
+
+                // Home games only (Hinkle is in Indianapolis)
+                const atHome = ev.home || /^vs\.?$/i.test(ev.atVs);
+                if (!atHome || (ev.location && !/indianapolis/i.test(ev.location))) { away++; continue; }
+
+                if (!/^\d{4}-\d{2}-\d{2}$/.test(ev.isoDate)) continue;
+                const [y, mo, d] = ev.isoDate.split('-').map(Number);
+                if (ev.hasResult || new Date(y, mo - 1, d) < today) { past++; continue; }
+
+                const opponent = ev.opponent || 'TBA';
+                const title = `Butler ${sport.name} vs. ${opponent}`;
+                const baseTime = formatTimeAOTW(ev.time);          // "7PM" -> "7:00PM"; TBA stays TBA
+                const time = baseTime === 'TBA' ? 'TBA' : `${baseTime} EST`;
+
+                const key = `${ev.isoDate}|${title}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+
+                venueData.push({
+                    venue: 'Butler - Hinkle Fieldhouse',
+                    title,
+                    date: ev.isoDate,
+                    time,
+                    type: sport.type
+                });
+                console.log(`✅ Kept: ${title} on ${ev.isoDate} (${time}) [${sport.type}]`);
+            }
+
+            // ---- Next month
+            const nextBtn = page.locator('button.slick-next, button:has-text("Next Month")').first();
+            if (!(await nextBtn.isVisible().catch(() => false))) break;
+            const before = await page.evaluate(sel => Array.from(document.querySelectorAll(sel)).map(li => li.textContent).join('|').slice(0, 2000), eventSel);
+            await nextBtn.click().catch(async () => { await nextBtn.evaluate(el => el.click()).catch(() => {}); });
+            await page.waitForFunction(
+                ([sel, prev]) => Array.from(document.querySelectorAll(sel)).map(li => li.textContent).join('|').slice(0, 2000) !== prev,
+                [eventSel, before],
+                { timeout: 10000 }
+            ).catch(() => {});
+        }
+
+        console.log(`🏁 Hinkle (butlersports): ${venueData.length} rows (${otherSport} other sports, ${away} away, ${past} past skipped).`);
+    } catch (err) {
+        console.error('❌ Hinkle (butlersports) failed:', err.message);
+    } finally {
+        await page.close();
+        await context.close();
+    }
+
+    return venueData;
+}
+
 // =========================================================================
 // MAIN EXECUTION
 // =========================================================================
@@ -1479,7 +1664,8 @@ if (require.main === module) {
             scrapeThePit(browser),
             scrapeKochArena(browser),
             scrapeBeasley(browser),
-            scrapeHinkle(browser)
+            scrapeHinkle(browser),
+            //scrapeHinkleSidearm(browser)
         ]);
 
         const allData = results.flat();
