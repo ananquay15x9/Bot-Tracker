@@ -1,5 +1,6 @@
 const { chromium } = require('playwright');
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
+const path = require('path');
 
 //========================================
 const MONTH_NUMBERS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
@@ -241,16 +242,40 @@ function categorizeVT(btnText, opponent) {
     return 'Other';
 }
 
-function categorizeBJC(title, intro, subtitle) {
-    const fullText = `${title || ''} ${intro || ''} ${subtitle || ''}`.toLowerCase();
-    if (fullText.includes('penn state vs.') || fullText.includes('basketball') || fullText.includes('mbb')) {
+function categorizeBJC(title, tagline, imgSrc, ticketHref) {
+    const imgUpper = (imgSrc || '').toUpperCase();
+    const combined = `${title} ${tagline} ${ticketHref}`.toLowerCase();
+
+    // 1. Check thumbnail image prefixes first (MBB_ / WBB_ / WVB_ / WREST_)
+    if (imgUpper.includes('WBB_') || imgUpper.includes('/WBB')) return 'NCAA WB';
+    if (imgUpper.includes('MBB_') || imgUpper.includes('/MBB')) return 'NCAA MB';
+    if (imgUpper.includes('WVB_') || imgUpper.includes('/WVB') || imgUpper.includes('VOLLEYBALL')) return 'NCAA WVB';
+    if (imgUpper.includes('WREST')) return 'Wrestling';
+
+    // 2. Fallback to text / Ticketmaster URL keywords
+    if (combined.includes("women's basketball") || combined.includes('womens basketball') || combined.includes('lady lions')) {
+        return 'NCAA WB';
+    }
+    if (combined.includes("men's basketball") || combined.includes('mens basketball')) {
         return 'NCAA MB';
     }
-    if (fullText.includes('wrestling')) return 'Wrestling';
-    if (fullText.includes('tour') || fullText.includes('live') || fullText.includes('presents') || fullText.includes('concert')) {
-        if (fullText.includes('monster truck')) return 'Other';
+    if (combined.includes('volleyball')) {
+        return 'NCAA WVB';
+    }
+    if (combined.includes('wrestling')) {
+        return 'Wrestling';
+    }
+
+    const otherKeywords = ['thon', 'commencement', 'graduation', 'disney on ice', 'monster jam', 'cirque', 'harlem globetrotters', 'wwe', 'pbr'];
+    if (otherKeywords.some(kw => combined.includes(kw))) {
+        return 'Other';
+    }
+
+    const concertKeywords = ['tour', 'concert', 'live', 'album', 'band', 'music', 'show', 'presents', 'comedy', 'comedian', 'symphony', 'orchestra'];
+    if (concertKeywords.some(kw => combined.includes(kw))) {
         return 'Concert';
     }
+
     return 'Other';
 }
 
@@ -570,6 +595,24 @@ async function scrapeVT(browser) {
 }
 
 // 3. Bryce Jordan Center
+function formatBJCTitle(str) {
+    if (!str) return '';
+    const keepUpper = new Set(['IU', 'PSU', 'NCAA', 'WWE', 'PBR', 'B1G', 'II', 'III', 'IV']);
+    return str
+        .replace(/\s+/g, ' ')
+        .trim()
+        .split(' ')
+        .map(word => {
+            const clean = word.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+            if (word.toLowerCase() === 'vs' || word.toLowerCase() === 'vs.') return 'vs';
+            if (keepUpper.has(clean)) return word.toUpperCase();
+            // Preserve existing mixed-case words (e.g., "McDonald", "LeBron")
+            if (word !== word.toUpperCase() && word !== word.toLowerCase()) return word;
+            return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+        })
+        .join(' ');
+}
+
 async function scrapeBJC(browser) {
     const page = await browser.newPage();
     const venueData = [];
@@ -578,63 +621,121 @@ async function scrapeBJC(browser) {
 
     try {
         console.log(`\n🚀 Scraping Bryce Jordan Center (BJC)...`);
-        await page.goto('https://bjc.psu.edu/upcoming-events', { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await page.goto('https://bjc.psu.edu/events', { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-        await page.addStyleTag({ content: '.satisfi_btn, .satisfi_container, #satisfi_chat_container { display: none !important; }' });
-        await page.waitForTimeout(2000);
-        await page.waitForSelector('.list-wrapper', { timeout: 15000 });
+        await page.addStyleTag({ content: '.satisfi_btn, .satisfi_container, #satisfi_chat_container, #transcend-consent-manager { display: none !important; }' });
+        await page.waitForSelector('.eventItem', { timeout: 15000 });
+
+        try {
+            await page.waitForFunction(() => {
+                const btn = document.querySelector('#loadMoreEvents');
+                return !btn || (!btn.disabled && window.getComputedStyle(btn).display !== 'none');
+            }, null, { timeout: 15000 });
+        } catch (e) {
+            if (e.name !== 'TimeoutError') throw e;
+            console.log('   ⚠️ BJC: "View More" did not become available; continuing with loaded events.');
+        }
+
+        // Click "View More" (#loadMoreEvents) until it disappears
+        let failedClicks = 0;
+        for (let i = 0; i < 100; i++) {
+            const btnVisible = await page.evaluate(() => {
+                const btn = document.querySelector('#loadMoreEvents');
+                if (!btn || btn.disabled) return false;
+                const style = window.getComputedStyle(btn);
+                return style.display !== 'none' && style.visibility !== 'hidden' && btn.offsetParent !== null;
+            });
+
+            if (!btnVisible) {
+                console.log('   ↪︎ BJC: "View More" button disappeared, all events loaded.');
+                break;
+            }
+
+            const beforeCount = await page.locator('.eventItem').count();
+            await page.locator('#loadMoreEvents').scrollIntoViewIfNeeded().catch(() => {});
+            await page.evaluate(() => document.querySelector('#loadMoreEvents')?.click());
+
+            try {
+                await page.waitForFunction(
+                    n => document.querySelectorAll('.eventItem').length > n,
+                    beforeCount,
+                    { timeout: 12000 }
+                );
+                failedClicks = 0;
+            } catch {
+                failedClicks++;
+                if (failedClicks >= 3) break;
+            }
+            await page.waitForTimeout(600);
+        }
 
         const rawEvents = await page.evaluate(() => {
             const results = [];
-            const cards = document.querySelectorAll('.list-wrapper');
+            const cards = document.querySelectorAll('.eventItem');
 
             cards.forEach(card => {
-                const titleEl = card.querySelector('.event-title a, .event-title');
-                const introEl = card.querySelector('.event-intro-title');
-                const subEl = card.querySelector('.event-sub-title');
+                const titleEl = card.querySelector('h3.title a, h3.title');
+                const tagEl = card.querySelector('h4.tagline');
+                const imgEl = card.querySelector('.thumb img');
+                const ticketEl = card.querySelector('a.tickets');
+
+                const monthEl = card.querySelector('.m-date__month');
+                const dayEl = card.querySelector('.m-date__day');
+                const yearEl = card.querySelector('.m-date__year');
+                const hourEl = card.querySelector('.m-date__hour');
 
                 const title = titleEl ? titleEl.innerText.trim() : "";
-                const intro = introEl ? introEl.innerText.trim() : "";
-                const subtitle = subEl ? subEl.innerText.trim() : "";
-                const dateTimeEl = card.querySelector('.date-time');
-                const rawDateTime = dateTimeEl ? dateTimeEl.innerText.trim() : "";
+                const tagline = tagEl ? tagEl.innerText.trim() : "";
+                const imgSrc = imgEl ? (imgEl.getAttribute('src') || "") : "";
+                const ticketHref = ticketEl ? (ticketEl.getAttribute('href') || "") : "";
 
-                if (title || intro) {
-                    results.push({ title, intro, subtitle, rawDateTime });
+                const month = monthEl ? monthEl.innerText.trim() : "";
+                const day = dayEl ? dayEl.innerText.trim() : "";
+                const year = yearEl ? yearEl.innerText.replace(/,/g, '').trim() : "";
+                const hour = hourEl ? hourEl.innerText.replace(/[·•]/g, '').trim() : "";
+
+                if (title) {
+                    results.push({ title, tagline, imgSrc, ticketHref, month, day, year, hour });
                 }
             });
+
             return results;
         });
 
+        console.log(`📋 Found ${rawEvents.length} total BJC event cards.`);
         const seenEvents = new Set();
+
         for (const ev of rawEvents) {
-            let finalTitle = ev.title;
-            if (ev.intro && !finalTitle.toLowerCase().includes(ev.intro.toLowerCase())) {
-                finalTitle = `${ev.title} - ${ev.intro}`;
+            let finalTitle = formatBJCTitle(ev.title);
+
+            // Append tagline only if it adds new context (avoid duplicating "Penn State vs IU Indy")
+            if (ev.tagline && !finalTitle.toLowerCase().includes(ev.tagline.toLowerCase()) && !ev.tagline.toLowerCase().includes(finalTitle.toLowerCase())) {
+                finalTitle = `${finalTitle} - ${formatBJCTitle(ev.tagline)}`;
             }
-            finalTitle = finalTitle.replace(/\s+/g, ' ').trim().toUpperCase();
 
             let cleanDate = "TBA";
-            let cleanTime = "TBA";
-
-            const dateMatch = ev.rawDateTime.match(/\b([A-Za-z]+)\.?\s+(\d{1,2}),?\s*(\d{4})?/i);
-            if (dateMatch) {
-                const month = dateMatch[1];
-                const day = dateMatch[2];
-                const year = dateMatch[3] || yearForText(`${month} ${day}`);
-                cleanDate = formatDate(`${month} ${day} ${year}`);
+            if (ev.month && ev.day) {
+                const yr = /^\d{4}$/.test(ev.year) ? ev.year : yearForText(`${ev.month} ${ev.day}`);
+                cleanDate = formatDate(`${ev.month} ${ev.day} ${yr}`);
             }
 
-            const timeMatch = ev.rawDateTime.match(/(\d{1,2}(?::\d{2})?\s*(?:AM|PM))/i);
-            if (timeMatch) cleanTime = formatTime(timeMatch[1]);
+            let cleanTime = "TBA";
+            if (ev.hour) {
+                const timeMatch = ev.hour.match(/(\d{1,2}(?::\d{2})?\s*(?:AM|PM))/i);
+                if (timeMatch) cleanTime = formatTime(timeMatch[1]);
+            }
 
-            if (cleanDate !== "TBA" && new Date(cleanDate) < today) continue;
+            if (cleanDate !== "TBA") {
+                const [cy, cm, cd] = cleanDate.split('-').map(Number);
+                if (new Date(cy, cm - 1, cd) < today) continue;
+            }
 
             const dedupeKey = `${cleanDate}-${cleanTime}-${finalTitle}`;
             if (seenEvents.has(dedupeKey)) continue;
             seenEvents.add(dedupeKey);
 
-            const eventType = categorizeBJC(ev.title, ev.intro, ev.subtitle);
+            const eventType = categorizeBJC(ev.title, ev.tagline, ev.imgSrc, ev.ticketHref);
+
             venueData.push({
                 venue: 'Penn State: Bryce Jordan Center',
                 title: finalTitle,
@@ -642,13 +743,16 @@ async function scrapeBJC(browser) {
                 time: cleanTime,
                 type: eventType
             });
+
             console.log(`✅ Kept: ${finalTitle} on ${cleanDate} (${cleanTime}) [${eventType}]`);
         }
-    } catch (e) { console.log(`❌ Bryce Jordan Center failed: ${e.message}`); }
-    await page.close();
+    } catch (e) {
+        console.log(`❌ Bryce Jordan Center failed: ${e.message}`);
+    } finally {
+        await page.close();
+    }
     return venueData;
 }
-
 
 
 // 4. Real Salt Lake (America First Field - Men's MLS)
@@ -1247,7 +1351,7 @@ async function scrapeBaylor(browser) {
     console.log(`\n🏁 Total events scraped: ${allData.length}`);
 
     const csvWriter = createCsvWriter({
-        path: 'calendar-2.csv',
+        path: path.join(__dirname, '..', 'calendar-2.csv'),
         header: [
             { id: 'venue', title: 'VENUE' },
             { id: 'title', title: 'EVENT NAME' },
