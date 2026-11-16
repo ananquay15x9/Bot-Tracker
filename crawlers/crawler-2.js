@@ -1197,7 +1197,7 @@ async function scrapeBaylor(browser) {
                                 if (sportCode.includes('WBB')) type = 'NCAA WB';
 
                                 BaylorResult.push({
-                                    venue: 'Foster Pavilion',
+                                    venue: 'Baylor - Foster Pavilion',
                                     title: `Baylor vs. ${opponent}`,
                                     date: formatDate(rawDate),
                                     time: formatTimeBaylor(rawTime),
