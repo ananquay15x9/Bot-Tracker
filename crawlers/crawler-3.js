@@ -482,7 +482,7 @@ async function scrapeBaylor(browser) {
                 seenEvents.add(dedupeKey);
 
                 venueData.push({
-                    venue: 'Foster Pavilion',
+                    venue: 'Baylor - Foster Pavilion',
                     title: finalTitle,
                     date: cleanDate,
                     time: cleanTime,
