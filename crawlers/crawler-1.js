@@ -930,7 +930,7 @@ async function scrapeKFC(browser) {
                     const formattedDate = formatDate(date);
 
                     venueData.push({
-                        venue: 'KFC Yum! Center',
+                        venue: 'Louisville - KFC Yum! Center',
                         title: title,
                         date: formattedDate,
                         time: formatTime(cleanTime),
