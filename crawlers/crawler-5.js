@@ -608,7 +608,7 @@ async function scrapeEagleBank(browser) {
         const key = `${date}|${time}|${title}`;
         if (seen.has(key)) return;
         seen.add(key);
-        venueData.push({ venue: 'EagleBank Arena', title, date, time, type });
+        venueData.push({ venue: 'GMU - EagleBank Arena', title, date, time, type });
         console.log(`✅ Kept: ${title} on ${date} (${time}) [${type}]`);
     };
 
